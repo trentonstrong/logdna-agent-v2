@@ -37,6 +37,9 @@ use tokio::sync::Mutex;
 mod dep_audit;
 mod stream_adapter;
 
+/// Debounce filesystem event with a delay of hundreds of milliseconds
+static FS_EVENT_DELAY: Duration = Duration::from_millis(500);
+
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -186,10 +189,7 @@ async fn main() {
     let fs_source = tail::RestartingTailer::new(
         ds_source_params,
         |item| match item {
-            Err(fs::cache::Error::WatchOverflow) => {
-                warn!("overflowed kernel queue, restarting stream");
-                true
-            }
+            // TODO check for any conditions that require the tailer to restart
             _ => false,
         },
         |params| {
@@ -197,7 +197,7 @@ async fn main() {
             let rules = params.1.clone();
             let lookback = params.2.clone();
             let offsets = params.3.clone();
-            let tailer = tail::Tailer::new(watched_dirs, rules, lookback, offsets);
+            let tailer = tail::Tailer::new(watched_dirs, rules, lookback, offsets, FS_EVENT_DELAY);
             async move { tail::process(tailer).expect("except Failed to create FS Tailer") }
         },
     )
