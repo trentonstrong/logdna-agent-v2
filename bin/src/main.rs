@@ -154,6 +154,11 @@ async fn main() {
 
     executor.init();
 
+    // Use an internal env var to support running integration test w/o additional delays
+    let event_delay = std::env::var("LOGDNA_INTERNAL_FS_DELAY")
+        .map(|s| Duration::from_millis(s.parse().unwrap()))
+        .unwrap_or(FS_EVENT_DELAY);
+
     #[cfg(feature = "libjournald")]
     let (journalctl_source, journald_source) = if config.journald.paths.is_empty() {
         let journalctl_source = create_journalctl_source()
@@ -198,7 +203,7 @@ async fn main() {
             let rules = params.1.clone();
             let lookback = params.2.clone();
             let offsets = params.3.clone();
-            let tailer = tail::Tailer::new(watched_dirs, rules, lookback, offsets, FS_EVENT_DELAY);
+            let tailer = tail::Tailer::new(watched_dirs, rules, lookback, offsets, event_delay);
             async move { tail::process(tailer).expect("except Failed to create FS Tailer") }
         },
     )
