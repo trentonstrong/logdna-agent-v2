@@ -1896,12 +1896,12 @@ name = "notify_stream"
 version = "0.1.0"
 dependencies = [
  "async-channel",
- "chrono",
  "futures",
  "notify",
  "pin-utils",
  "predicates 1.0.8",
  "tempfile",
+ "time 0.3.6",
  "tokio",
 ]
 
