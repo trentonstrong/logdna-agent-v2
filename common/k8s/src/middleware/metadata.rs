@@ -324,6 +324,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(target_os = "linux")]
     async fn test_init_max_elapsed_time() {
         let config = Config::new("https://127.0.0.10/".parse::<Uri>().unwrap());
         let client = Client::try_from(config).unwrap();
