@@ -37,7 +37,7 @@ fn test_command_line_arguments_help() {
         "-k, --key",
         "The ingestion key associated with your LogDNA account",
         "-d, --logdir",
-        "Adds log directories to scan, in addition to the default (/var/log)",
+        "Adds log directories to scan, in addition to the default",
         "-t, --tags",
         "List of tags metadata to attach to lines forwarded from this agent",
         // Verify long only options
@@ -69,7 +69,7 @@ fn test_command_line_arguments_help() {
     ]
     .iter()
     .for_each(|m| {
-        assert!(contains(*m).eval(stdout));
+        assert!(contains(*m).eval(stdout), "Not found: {}", *m);
     });
 }
 
@@ -279,7 +279,7 @@ fn test_command_line_arguments_should_set_config() {
         },
         |d| {
             assert!(contains("tags: \"a,b\"").eval(d));
-            assert!(is_match(r"log:\s+dirs:\s+\- /var/log/\s+\- /d1/\s+\- /d2/")
+            assert!(is_match(r"log:\s+dirs:\s+\- /var/log\s+\- /d1/\s+\- /d2/")
                 .unwrap()
                 .eval(d));
             assert!(contains("host: remotehost").eval(d));
