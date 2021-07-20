@@ -33,6 +33,14 @@ pipeline {
             error("A maintainer needs to approve this PR for CI by commenting")
           }
         }
+        stage('print build source info') {
+            steps {
+                script {
+                    def causes = currentBuild.getBuildCauses()
+                    print causes
+                }
+            }
+        }
         stage('Pull Build Image') {
             steps {
                 sh "docker pull ${RUST_IMAGE_REPO}:${RUST_IMAGE_TAG}"
