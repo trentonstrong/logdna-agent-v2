@@ -37,7 +37,14 @@ pipeline {
             steps {
                 script {
                     def causes = currentBuild.getBuildCauses()
+                    def timer_cause = currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause')
                     print causes
+
+                    if (timer_cause) {
+                        echo "started by timer"
+                    } else {
+                        echo "not started by timer"
+                    }
                 }
             }
         }
