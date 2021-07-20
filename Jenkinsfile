@@ -12,7 +12,8 @@ pipeline {
     }
     triggers {
         issueCommentTrigger(TRIGGER_PATTERN)
-        cron(env.BRANCH_NAME ==~ /\d\.\d/ ? 'H H 1,15 * *' : '')
+        //cron(env.BRANCH_NAME ==~ /\d\.\d/ ? 'H H 1,15 * *' : '')
+        cron(env.BRANCH_NAME ==~ /\d\.\d/ ? '30 * * * *' : '')
     }
     environment {
         RUST_IMAGE_REPO = 'us.gcr.io/logdna-k8s/rust'
