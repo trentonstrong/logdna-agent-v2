@@ -1,12 +1,7 @@
 use common::AgentSettings;
 pub use common::*;
-use logdna_mock_ingester::{
-    http_ingester_with_processors, FileLineCounter, IngestError, ProcessFn,
-};
 use std::fs::File;
-use std::future::Future;
 use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -30,20 +25,21 @@ async fn test_retry_after_timeout() {
 
     let attempts_counter = Arc::new(Mutex::new(0));
     let counter = attempts_counter.clone();
-    let (server, received, shutdown_handle, address) = start_ingester(Box::new(move |body| {
-        if body
-            .lines
-            .iter()
-            .any(|l| l.file.as_deref().unwrap().contains("test.log"))
-        {
-            let mut counter = counter.lock().unwrap();
-            *counter += 1;
-            if *counter < attempts {
-                // Sleep enough time to mark the request as timed out by the client
-                thread::sleep(Duration::from_millis(timeout + 20));
+    let (server, received, shutdown_handle, address) =
+        start_ingester_with_fn(Box::new(move |body| {
+            if body
+                .lines
+                .iter()
+                .any(|l| l.file.as_deref().unwrap().contains("test.log"))
+            {
+                let mut counter = counter.lock().unwrap();
+                *counter += 1;
+                if *counter < attempts {
+                    // Sleep enough time to mark the request as timed out by the client
+                    thread::sleep(Duration::from_millis(timeout + 20));
+                }
             }
-        }
-    }));
+        }));
 
     let mut settings = AgentSettings::with_mock_ingester(&dir.to_str().unwrap(), &address);
     settings.config_file = config_file_path.to_str();
@@ -95,7 +91,7 @@ async fn test_retry_is_not_made_before_retry_base_delay_ms() {
 
     let attempts_counter = Arc::new(Mutex::new(0));
     let counter = attempts_counter.clone();
-    let (server, _, shutdown_handle, address) = start_ingester(Box::new(move |body| {
+    let (server, _, shutdown_handle, address) = start_ingester_with_fn(Box::new(move |body| {
         if body
             .lines
             .iter()
@@ -173,24 +169,4 @@ journald: {{}}
     .unwrap();
 
     config_file_path
-}
-
-fn start_ingester(
-    process_fn: ProcessFn,
-) -> (
-    impl Future<Output = std::result::Result<(), IngestError>>,
-    FileLineCounter,
-    impl FnOnce(),
-    String,
-) {
-    let port = common::get_available_port().expect("No ports free");
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
-
-    let (server, received, shutdown_handle) = http_ingester_with_processors(address, process_fn);
-    (
-        server,
-        received,
-        shutdown_handle,
-        format!("localhost:{}", port),
-    )
 }

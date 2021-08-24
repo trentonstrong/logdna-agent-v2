@@ -15,7 +15,10 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 
 use futures::Future;
 use log::debug;
-use logdna_mock_ingester::{http_ingester, https_ingester, FileLineCounter, IngestError};
+use logdna_mock_ingester::{
+    http_ingester, http_ingester_with_processors, https_ingester, FileLineCounter, IngestError,
+    ProcessFn,
+};
 
 use rcgen::generate_simple_self_signed;
 use rustls::internal::pemfile;
@@ -359,4 +362,24 @@ pub fn consume_output(stderr_handle: std::process::ChildStderr) {
             debug!("{:?}", line);
         }
     });
+}
+
+pub fn start_ingester_with_fn(
+    process_fn: ProcessFn,
+) -> (
+    impl Future<Output = std::result::Result<(), IngestError>>,
+    FileLineCounter,
+    impl FnOnce(),
+    String,
+) {
+    let port = get_available_port().expect("No ports free");
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
+
+    let (server, received, shutdown_handle) = http_ingester_with_processors(address, process_fn);
+    (
+        server,
+        received,
+        shutdown_handle,
+        format!("localhost:{}", port),
+    )
 }
