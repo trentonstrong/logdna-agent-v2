@@ -123,6 +123,11 @@ ifneq ($(TARGET),)
 	TARGET_DOCKER_ARG= --target $(TARGET)
 endif
 
+.PHONY:update-deps
+update-deps:
+	$(RUST_COMMAND) "--env RUST_BACKTRACE=full" "cargo update"
+	$(RUST_COMMAND) "--env RUST_BACKTRACE=full" "cargo generate-lockfile"
+
 .PHONY:build
 build: ## Build the agent
 	$(UNCACHED_RUST_COMMAND) "$(BUILD_ENV_DOCKER_ARGS) --env RUST_BACKTRACE=full" "RUSTFLAGS='$(RUSTFLAGS)' BINDGEN_EXTRA_CLANG_ARGS='$(BINDGEN_EXTRA_CLANG_ARGS)' cargo build --no-default-features $(FEATURES_ARG) --manifest-path bin/Cargo.toml $(TARGET_DOCKER_ARG)"
