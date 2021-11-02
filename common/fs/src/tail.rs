@@ -13,14 +13,12 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use futures::{ready, Future, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 
 use std::fmt;
 use thiserror::Error;
 
 use pin_project_lite::pin_project;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 #[derive(Clone, std::fmt::Debug, PartialEq)]
 pub enum Lookback {
@@ -81,7 +79,6 @@ pub struct Tailer {
     fs_cache: Arc<Mutex<FileSystem>>,
     initial_offsets: Option<HashMap<FileId, u64>>,
     event_times: SyncHashMap<EntryKey, (usize, chrono::DateTime<chrono::Utc>)>,
-    buf: [u8; 4096],
 }
 
 fn get_file_for_path(fs: &FileSystem, next_path: &std::path::Path) -> Option<EntryKey> {
@@ -294,10 +291,10 @@ async fn handle_event(
 
 /// Runs the main logic of the tailer, this can only be run once so Tailer is consumed
 pub fn process(
-    state: &mut Tailer,
-) -> Result<impl Stream<Item = Result<LazyLineSerializer, CacheError>> + '_, std::io::Error> {
+    state: Tailer,
+) -> Result<impl Stream<Item = Result<LazyLineSerializer, CacheError>>, std::io::Error> {
     let events = {
-        match FileSystem::stream_events(state.fs_cache.clone(), &mut state.buf) {
+        match FileSystem::stream_events(state.fs_cache.clone()) {
             Ok(events) => events,
             Err(e) => {
                 warn!("tailer stream raised exception: {:?}", e);
@@ -314,7 +311,7 @@ pub fn process(
             let fs = state.fs_cache.clone();
             let lookback_config = state.lookback_config.clone();
             let initial_offsets = state.initial_offsets.clone();
-            let event_times = state.event_times.clone();
+            let event_times = state.event_times;
 
             move |(event_idx, (event_result, event_time))| {
                 let fs = fs.clone();
@@ -376,6 +373,30 @@ pub fn process(
         .flatten())
 }
 
+#[derive(Clone)]
+pub struct TailerParams {
+    watched_dirs: Vec<DirPathBuf>,
+    rules: Rules,
+    lookback_config: Lookback,
+    initial_offsets: Option<HashMap<FileId, u64>>,
+}
+
+impl TailerParams {
+    pub fn new(
+        watched_dirs: Vec<DirPathBuf>,
+        rules: Rules,
+        lookback_config: Lookback,
+        initial_offsets: Option<HashMap<FileId, u64>>,
+    ) -> TailerParams {
+        TailerParams {
+            watched_dirs,
+            rules,
+            lookback_config,
+            initial_offsets,
+        }
+    }
+}
+
 impl Tailer {
     /// Creates new instance of Tailer
     pub fn new(
@@ -389,76 +410,71 @@ impl Tailer {
             fs_cache: Arc::new(Mutex::new(FileSystem::new(watched_dirs, rules))),
             initial_offsets,
             event_times: Arc::new(Mutex::new(HashMap::new())),
-            buf: [0u8; 4096],
         }
+    }
+}
+
+impl From<TailerParams> for Tailer {
+    fn from(params: TailerParams) -> Tailer {
+        Tailer::new(
+            params.watched_dirs,
+            params.rules,
+            params.lookback_config,
+            params.initial_offsets,
+        )
     }
 }
 
 pin_project! {
     #[must_use = "streams do nothing unless polled"]
-    pub struct RestartingTailer<C, F, S: Stream, Fut> {
-        state: Tailer,
-        restart: C,
-        f: F,
+    pub struct RestartingTailer<S: Stream> {
         #[pin]
         stream: S,
-        #[pin]
-        pending: Option<Fut>
     }
 }
 
-impl<C, F, S: Stream, T, Fut> RestartingTailer<C, F, S, Fut>
-where
-    C: Fn(&T) -> bool,
-    F: FnMut(&mut Tailer) -> Fut,
-    S: Stream<Item = T>,
-    Fut: Future<Output = S>,
-{
-    pub async fn new(mut state: Tailer, restart: C, mut f: F) -> Self {
-        let stream = f(&mut state).await;
-        Self {
-            state,
-            restart,
-            f,
-            stream,
-            pending: None,
-        }
-    }
-}
+pub fn restarting_tail_stream(
+    tailer_params: TailerParams,
+) -> Result<impl Stream<Item = Result<LazyLineSerializer, CacheError>>, std::io::Error> {
+    let tailer_params = Box::new(tailer_params);
 
-impl<C, F, S: Stream, T, Fut> Stream for RestartingTailer<C, F, S, Fut>
-where
-    C: Fn(&T) -> bool,
-    F: FnMut(&mut Tailer) -> Fut,
-    S: Stream<Item = T>,
-    Fut: Future<Output = S>,
-{
-    type Item = T;
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.stream.size_hint()
-    }
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
-        let mut this = self.project();
-
-        Poll::Ready(loop {
-            if let Some(p) = this.pending.as_mut().as_pin_mut() {
-                let stream = ready!(p.poll(cx));
-                this.pending.set(None);
-                this.stream.set(stream);
-            } else if let Some(value) = ready!(this.stream.as_mut().poll_next(cx)) {
-                if (this.restart)(&value) {
-                    let stream_fut = (this.f)(this.state);
-                    this.pending.set(Some(stream_fut));
+    let tailer = Tailer::from(*tailer_params.clone());
+    Ok(futures::stream::unfold(
+        (Some(Box::pin(process(tailer)?)), (tailer_params)),
+        move |(mut stream, tailer_params)| async move {
+            loop {
+                // Take the stream out of the option
+                if let Some(mut stream) = stream.take() {
+                    // poll the stream
+                    let stream_res = stream.next().await;
+                    match stream_res {
+                        Some(Ok(line)) => break Some((Ok(line), (Some(stream), tailer_params))),
+                        Some(Err(e)) => match e {
+                            // If the cache overflowed then loop;
+                            crate::cache::Error::WatchOverflow => {
+                                warn!("overflowed kernel queue, restarting stream");
+                            }
+                            e => break Some((Err(e), (Some(stream), tailer_params))),
+                        },
+                        None => break None,
+                    }
                 } else {
-                    break Some(value);
+                    // Set up the tail stream
+                    let tailer = Tailer::from(*tailer_params.clone());
+                    match process(tailer) {
+                        Ok(tail_stream) => {
+                            stream = Some(Box::pin(tail_stream));
+                            // Next iteration of the loop we'll get a result
+                        }
+                        Err(_e) => {
+                            // TODO pass this error up properly
+                            break None; // Some((Err(e.into()), (None, tailer_params)))
+                        }
+                    }
                 }
-            } else {
-                break None;
             }
-        })
-    }
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -469,12 +485,10 @@ mod test {
 
     use http::types::body::LineBufferMut;
 
-    use std::cell::Cell;
     use std::convert::TryInto;
     use std::fs::File;
     use std::io::Write;
     use std::panic;
-    use std::rc::Rc;
     use tempfile::tempdir;
     use tokio_stream::StreamExt;
 
@@ -517,7 +531,7 @@ mod test {
                 });
                 file.sync_all().expect("Failed to sync file");
 
-                let mut tailer = Tailer::new(
+                let tailer = Tailer::new(
                     vec![dir
                         .path()
                         .try_into()
@@ -527,7 +541,7 @@ mod test {
                     None,
                 );
 
-                let stream = process(&mut tailer)
+                let stream = process(tailer)
                     .expect("failed to read events")
                     .timeout(std::time::Duration::from_millis(500));
 
@@ -565,7 +579,7 @@ mod test {
                 });
                 file.sync_all().expect("Failed to sync file");
 
-                let mut tailer = Tailer::new(
+                let tailer = Tailer::new(
                     vec![dir
                         .path()
                         .try_into()
@@ -575,7 +589,7 @@ mod test {
                     None,
                 );
 
-                let stream = process(&mut tailer)
+                let stream = process(tailer)
                     .expect("failed to read events")
                     .timeout(std::time::Duration::from_millis(500));
 
@@ -618,7 +632,7 @@ mod test {
                 });
                 file.sync_all().expect("Failed to sync file");
 
-                let mut tailer = Tailer::new(
+                let tailer = Tailer::new(
                     vec![dir
                         .path()
                         .try_into()
@@ -628,7 +642,7 @@ mod test {
                     None,
                 );
 
-                let stream = process(&mut tailer)
+                let stream = process(tailer)
                     .expect("failed to read events")
                     .timeout(std::time::Duration::from_millis(500));
 
@@ -650,131 +664,5 @@ mod test {
                 debug!("{:?}, {:?}", events.len(), &events);
             })
         })
-    }
-
-    #[tokio::test]
-    async fn restart_tailer_with_empty_stream() {
-        let mut rules = Rules::new();
-        rules.add_inclusion(RuleDef::glob_rule(r"**").unwrap());
-
-        let dir = tempdir().expect("Couldn't create temp dir...");
-        let watched_dirs = vec![dir
-            .path()
-            .try_into()
-            .unwrap_or_else(|_| panic!("{:?} is not a directory!", dir.path()))];
-
-        let tailer = Tailer::new(watched_dirs, rules, Lookback::None, None);
-        let rt = RestartingTailer::new(
-            tailer,
-            |_: &String| false,
-            |&mut _| async { futures::stream::empty() },
-        )
-        .await;
-
-        let result = rt.collect::<Vec<String>>().await;
-        assert!(result.is_empty());
-    }
-
-    #[tokio::test]
-    async fn restart_tailer_exhausting_stream() {
-        let mut rules = Rules::new();
-        rules.add_inclusion(RuleDef::glob_rule(r"**").unwrap());
-
-        let dir = tempdir().expect("Couldn't create temp dir...");
-        let watched_dirs = vec![dir
-            .path()
-            .try_into()
-            .unwrap_or_else(|_| panic!("{:?} is not a directory!", dir.path()))];
-
-        let tailer = Tailer::new(watched_dirs, rules, Lookback::None, None);
-        let rt = RestartingTailer::new(
-            tailer,
-            |_: &usize| false,
-            |&mut _| async { futures::stream::iter(vec![1, 2, 3]) },
-        )
-        .await;
-
-        let result = rt.collect::<Vec<usize>>().await;
-        assert_eq!(result, vec![1, 2, 3]);
-    }
-
-    #[tokio::test]
-    async fn restart_tailer_multiple_recoveries() {
-        let mut rules = Rules::new();
-        rules.add_inclusion(RuleDef::glob_rule(r"**").unwrap());
-
-        let dir = tempdir().expect("Couldn't create temp dir...");
-        let watched_dirs = vec![dir
-            .path()
-            .try_into()
-            .unwrap_or_else(|_| panic!("{:?} is not a directory!", dir.path()))];
-
-        let tailer = Tailer::new(watched_dirs, rules, Lookback::None, None);
-
-        let global_stream_count: Rc<Cell<usize>> = Rc::new(Cell::new(1));
-        let rt = RestartingTailer::new(
-            tailer,
-            // For this test, any number divisible by 4 should trigger the recovery behavior.
-            // Those values will be dropped from the collected output.
-            |n: &usize| *n % 4 == 0,
-            // Builds a closure to produce a stream of incrementing integers using a global
-            // state such that a number is only produced once. A number, once produced, will
-            // never be produced again across all instances of streams obtained from the closure.
-            |&mut _| async {
-                let state = global_stream_count.clone();
-                Box::pin(futures::stream::unfold(state, |state| async {
-                    let cur = state.get();
-                    state.set(cur + 1);
-                    Some((cur, state))
-                }))
-            },
-        )
-        .await;
-
-        // // Limit the recovery stream to producing 9 elements. The value at 4 and 8 will be skipped
-        // // which verifies that the stream was able to correctly recover more than once.
-        let result = rt.take(8).collect::<Vec<usize>>().await;
-        assert_eq!(result, vec![1, 2, 3, 5, 6, 7, 9, 10]);
-    }
-
-    #[tokio::test]
-    async fn restart_tailer_successive_recoveries() {
-        let mut rules = Rules::new();
-        rules.add_inclusion(RuleDef::glob_rule(r"**").unwrap());
-
-        let dir = tempdir().expect("Couldn't create temp dir...");
-        let watched_dirs = vec![dir
-            .path()
-            .try_into()
-            .unwrap_or_else(|_| panic!("{:?} is not a directory!", dir.path()))];
-
-        let tailer = Tailer::new(watched_dirs, rules, Lookback::None, None);
-
-        let global_stream_count: Rc<Cell<usize>> = Rc::new(Cell::new(1));
-        let rt = RestartingTailer::new(
-            tailer,
-            // For this test, the recovery is triggered on both 2 and 3. This will cause two recovery
-            // attempts in succession.
-            |n: &usize| *n == 2 || *n == 3,
-            // Builds a closure to produce a stream of incrementing integers up to 6, exclusive,
-            // using a global state such that a number is only produced once. A number, once produced,
-            // will never be produced again across all instances of streams obtained from the closure.
-            |&mut _| async {
-                let state = global_stream_count.clone();
-                Box::pin(futures::stream::unfold(state, |state| async {
-                    let cur = state.get();
-                    if cur < 6 {
-                        state.set(cur + 1);
-                        Some((cur, state))
-                    } else {
-                        None
-                    }
-                }))
-            },
-        )
-        .await;
-
-        let result = rt.collect::<Vec<usize>>().await;
-        assert_eq!(result, vec![1, 4, 5]);
     }
 }
