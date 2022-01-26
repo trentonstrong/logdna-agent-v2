@@ -322,7 +322,7 @@ pub struct TailedFile<T> {
 
 impl<T> TailedFile<T> {
     pub(crate) fn new(
-        path: &std::path::Path,
+        path: &Path,
         initial_offsets: SpanVec,
         resume_events_sender: Option<Sender<(u64, OffsetDateTime)>>,
     ) -> Result<Self, std::io::Error> {
@@ -339,23 +339,6 @@ impl<T> TailedFile<T> {
             resume_events_sender,
             _phantom: std::marker::PhantomData::<T>,
         })
-    }
-
-    pub(crate) async fn seek(&mut self, offset: u64) -> Result<(), std::io::Error> {
-        let mut inner = self.inner.lock().await;
-        inner.offset = offset;
-        inner
-            .reader
-            .get_mut()
-            .get_mut()
-            .seek(SeekFrom::Start(offset))
-            .await?;
-        Ok(())
-    }
-
-    pub(crate) async fn get_inode(&self) -> u64 {
-        let inner = self.inner.lock().await;
-        inner.inode
     }
 }
 

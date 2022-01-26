@@ -32,5 +32,5 @@ tokio-test = "0.4"
 
 [features]
 default = []
-libjournald = ["systemd", "mio"]
+libjournald = ["systemd"]
 journald_tests = ["libjournald", "serial_test"]

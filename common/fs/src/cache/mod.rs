@@ -11,9 +11,9 @@ use std::cell::RefCell;
 use std::collections::hash_map::Entry as HashMapEntry;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fs::{read_dir, OpenOptions};
+use std::fs::OpenOptions;
 use std::ops::Deref;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::{fmt, fs, io};
@@ -373,7 +373,7 @@ impl FileSystem {
 
         let mut events = Vec::new();
         //TODO: Check duplicates
-        self.insert(&path, &mut events, _entries)
+        self.insert(path, &mut events, _entries)
             .map(move |_| events)
     }
 
@@ -557,7 +557,6 @@ impl FileSystem {
                 self.wd_by_inode.insert(inode, path.into());
 
                 let offsets = self.get_initial_offset(path, inode.into());
-                let initial_offset = offsets.first().map(|offset| offset.end).unwrap_or(0);
 
                 Metrics::fs().increment_tracked_files();
                 Entry::File {
@@ -911,7 +910,7 @@ impl FileSystem {
     fn entry_path_passes(&self, entry_key: EntryKey, entries: &EntryMap) -> bool {
         entries
             .get(entry_key)
-            .map(|e| self.passes(e.path(), &entries))
+            .map(|e| self.passes(e.path(), entries))
             .unwrap_or(false)
     }
 
@@ -943,84 +942,10 @@ impl fmt::Debug for FileSystem {
     }
 }
 
-// recursively scans a directory for unlimited depth
-fn recursive_scan(path: &Path) -> Vec<PathBuf> {
-    if !path.is_dir() {
-        return vec![];
-    }
-
-    let mut paths = vec![path.to_path_buf()];
-
-    // read all files/dirs in path at depth 1
-    let tmp_paths = match read_dir(&path) {
-        Ok(v) => v,
-        Err(e) => {
-            error!("failed accessing {:?}: {:?}", path, e);
-            return paths;
-        }
-    };
-    // iterate over all the paths and call recursive_scan on all dirs
-    for tmp_path in tmp_paths {
-        let path = match tmp_path {
-            Ok(path) => path.path(),
-            Err(e) => {
-                error!("failed scanning directory {:?}: {:?}", path, e);
-                continue;
-            }
-        };
-        // if the path is a dir then recursively scan it also
-        // so that we have an unlimited depth scan
-        if path.is_dir() {
-            paths.append(&mut recursive_scan(&path))
-        } else {
-            paths.push(path)
-        }
-    }
-
-    paths
-}
-
-// Split the path into it's components.
-fn into_components(path: &Path) -> Vec<OsString> {
-    path.components()
-        .filter_map(|c| match c {
-            Component::RootDir => Some("/".into()),
-            Component::Normal(path) => Some(path.into()),
-            _ => None,
-        })
-        .collect()
-}
-
-// Build a rule for all sub paths for a path e.g. /var/log/containers => include [/, /var, /var/log, /var/log/containers]
-fn into_rules(path: PathBuf) -> Rules {
-    let mut rules = Rules::new();
-    append_rules(&mut rules, path);
-    rules
-}
-
-// Attach rules for all sub paths for a path
-fn append_rules(rules: &mut Rules, mut path: PathBuf) {
-    rules.add_inclusion(
-        RuleDef::glob_rule(path.join(r"**").to_str().expect("invalid unicode in path"))
-            .expect("invalid glob rule format"),
-    );
-
-    loop {
-        rules.add_inclusion(
-            RuleDef::glob_rule(path.to_str().expect("invalid unicode in path"))
-                .expect("invalid glob rule format"),
-        );
-        if !path.pop() {
-            break;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::rule::{RuleDef, Rules};
-    use crate::test::LOGGER;
     use pin_utils::pin_mut;
     use std::convert::TryInto;
     use std::fs::{copy, create_dir, hard_link, remove_dir_all, remove_file, rename, File};

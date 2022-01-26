@@ -34,6 +34,7 @@ use std::time::Duration;
 use tokio::signal::*;
 use tokio::sync::Mutex;
 
+#[cfg(feature = "dep_audit")]
 mod dep_audit;
 mod stream_adapter;
 
@@ -60,6 +61,7 @@ async fn main() {
 
     // Actually use the data to work around a bug in rustc:
     // https://github.com/rust-lang/rust/issues/47384
+    #[cfg(feature = "dep_audit")]
     dep_audit::get_auditable_dependency_list()
         .map_or_else(|e| trace!("{}", e), |d| trace!("{}", d));
 
@@ -194,10 +196,8 @@ async fn main() {
 
     let fs_source = tail::RestartingTailer::new(
         ds_source_params,
-        |item| match item {
-            // TODO check for any conditions that require the tailer to restart
-            _ => false,
-        },
+        // TODO check for any conditions that require the tailer to restart
+        |_item| false,
         |params| {
             let watched_dirs = params.0.clone();
             let rules = params.1.clone();

@@ -6,20 +6,19 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use wait_timeout::ChildExt;
 
 use crate::common::{consume_output, AgentSettings};
 
 use assert_cmd::prelude::*;
 use futures::FutureExt;
 use log::debug;
+use logdna_mock_ingester::FileInfo;
 use predicates::prelude::*;
 use proptest::prelude::*;
 use tempfile::tempdir;
 use test_types::strategies::random_line_string_vec;
 use tokio::io::BufWriter;
 use tokio::task;
-use logdna_mock_ingester::FileInfo;
 
 mod common;
 
@@ -956,7 +955,10 @@ async fn test_tags() {
         }
 
         assert_eq!(file_info.lines, total_lines);
-        assert_eq!(file_info.values, vec![common::LINE.to_owned() + "\n"; total_lines]);
+        assert_eq!(
+            file_info.values,
+            vec![common::LINE.to_owned() + "\n"; total_lines]
+        );
         assert_eq!(file_info.tags, Some(tag.to_string()));
         shutdown_handle();
     });

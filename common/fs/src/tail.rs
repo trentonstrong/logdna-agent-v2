@@ -66,7 +66,7 @@ async fn handle_event(
                 }
                 Entry::Symlink { link, .. } => {
                     let sym_path = path;
-                    let final_target = get_file_for_path(&fs, link)?;
+                    let final_target = get_file_for_path(fs, link)?;
 
                     let entries = &fs.entries.borrow();
                     let path = entries.get(final_target)?.path();
@@ -77,7 +77,7 @@ async fn handle_event(
                         path.display()
                     );
 
-                    let entry_key = get_file_for_path(fs, &path)?;
+                    let entry_key = get_file_for_path(fs, path)?;
                     if let Entry::File { data, .. } = &entries.get(entry_key)? {
                         info!(
                             "initialized symlink {:?} as {:?}",
@@ -322,8 +322,6 @@ where
 mod test {
     use super::*;
     use crate::rule::{RuleDef, Rules};
-    use crate::test::LOGGER;
-    use http::types::body::LineBufferMut;
     use pin_utils::pin_mut;
     use std::cell::Cell;
     use std::convert::TryInto;

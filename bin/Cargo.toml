@@ -53,7 +53,8 @@ systemd = { package = "systemd", version = "0.7" }
 tikv-jemallocator  = { version = "0.4.1", default-features = false, features = ["stats"] }
 
 [features]
-default = []
+default = ["dep_audit"]
+dep_audit = []
 integration_tests = []
 profiling = ["tikv-jemallocator/profiling"]
 slow_tests = []
