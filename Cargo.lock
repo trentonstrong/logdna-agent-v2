@@ -40,7 +40,7 @@ checksum = "c98233c6673d8601ab23e77eb38f999c51100d46c5703b17288c57fddf3a1ffe"
 dependencies = [
  "bstr",
  "doc-comment",
- "predicates 2.1.1",
+ "predicates",
  "predicates-core",
  "predicates-tree",
  "wait-timeout",
@@ -536,12 +536,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "difference"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "524cbf6897b527295dff137cec09ecf3a05f4fddffd7dfcd1585403449e74198"
-
-[[package]]
 name = "difflib"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -719,15 +713,6 @@ dependencies = [
  "crc32fast",
  "libc",
  "miniz_oxide",
-]
-
-[[package]]
-name = "float-cmp"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1267f4ac4f343772758f7b1bdcbe767c218bbab93bb432acbf5162bbf85a6c4"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]
@@ -1285,7 +1270,6 @@ dependencies = [
  "http 0.1.0",
  "log",
  "metrics",
- "mio 0.7.14",
  "partial-io",
  "serial_test",
  "systemd",
@@ -1546,7 +1530,7 @@ dependencies = [
  "config",
  "env_logger 0.8.4",
  "escargot",
- "float-cmp 0.9.0",
+ "float-cmp",
  "fs",
  "futures",
  "http 0.1.0",
@@ -1566,7 +1550,7 @@ dependencies = [
  "nix",
  "pin-utils",
  "pnet",
- "predicates 2.1.1",
+ "predicates",
  "prometheus-parse",
  "proptest",
  "rand",
@@ -1582,7 +1566,6 @@ dependencies = [
  "tikv-jemallocator",
  "time 0.3.7",
  "tokio",
- "tokio-stream",
  "tokio-test",
  "types",
  "wait-timeout",
@@ -1625,7 +1608,6 @@ dependencies = [
  "env_logger 0.8.4",
  "futures",
  "hyper",
- "hyper-rustls 0.23.0",
  "log",
  "rcgen",
  "rustls 0.20.2",
@@ -1671,7 +1653,6 @@ dependencies = [
  "num",
  "prometheus",
  "tikv-jemalloc-ctl",
- "time 0.3.6",
  "tokio",
 ]
 
@@ -1833,9 +1814,9 @@ dependencies = [
  "futures",
  "notify",
  "pin-utils",
- "predicates 1.0.8",
+ "predicates",
  "tempfile",
- "time 0.3.6",
+ "time 0.3.7",
  "tokio",
 ]
 
@@ -2245,25 +2226,12 @@ checksum = "eb9f9e6e233e5c4a35559a617bf40a4ec447db2e84c20b55a6f83167b7e57872"
 
 [[package]]
 name = "predicates"
-version = "1.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f49cfaf7fdaa3bfacc6fa3e7054e65148878354a5cfddcf661df4c851f8021df"
-dependencies = [
- "difference",
- "float-cmp 0.8.0",
- "normalize-line-endings",
- "predicates-core",
- "regex",
-]
-
-[[package]]
-name = "predicates"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5aab5be6e4732b473071984b3164dbbfb7a3674d30ea5ff44410b6bcd960c3c"
 dependencies = [
  "difflib",
- "float-cmp 0.9.0",
+ "float-cmp",
  "itertools",
  "normalize-line-endings",
  "predicates-core",
