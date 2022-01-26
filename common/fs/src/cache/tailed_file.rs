@@ -1,8 +1,8 @@
+use crate::cache::get_inode;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fs::OpenOptions;
 use std::ops::DerefMut;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -357,21 +357,6 @@ impl<T> TailedFile<T> {
         let inner = self.inner.lock().await;
         inner.inode
     }
-}
-
-#[cfg(unix)]
-fn get_inode(path: &Path, _file: &std::fs::File) -> std::io::Result<u64> {
-    use std::os::unix::fs::MetadataExt;
-
-    Ok(path.metadata()?.ino())
-}
-
-#[cfg(windows)]
-fn get_inode(_path: &Path, file: &std::fs::File) -> std::io::Result<u64> {
-    use winapi_util::AsHandleRef;
-
-    let h = file.as_handle_ref();
-    return Ok(winapi_util::file::information(h)?.file_index());
 }
 
 impl TailedFile<LineBuilder> {

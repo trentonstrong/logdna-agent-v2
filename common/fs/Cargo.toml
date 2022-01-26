@@ -40,6 +40,7 @@ futures-core = "0.3"
 futures-util = "0.3"
 
 winapi-util = { version = "0.1" }
+os_str_bytes = "6"
 
 [dev-dependencies]
 env_logger = "0.8"

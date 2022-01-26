@@ -11,9 +11,8 @@ use std::cell::RefCell;
 use std::collections::hash_map::Entry as HashMapEntry;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fs::read_dir;
+use std::fs::{read_dir, OpenOptions};
 use std::ops::Deref;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -70,6 +69,21 @@ pub enum Error {
 }
 
 type EventTimestamp = time::OffsetDateTime;
+
+#[cfg(unix)]
+pub(crate) fn get_inode(path: &Path, _file: &std::fs::File) -> std::io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+
+    Ok(path.metadata()?.ino())
+}
+
+#[cfg(windows)]
+pub(crate) fn get_inode(_path: &Path, file: &std::fs::File) -> std::io::Result<u64> {
+    use winapi_util::AsHandleRef;
+
+    let h = file.as_handle_ref();
+    return Ok(winapi_util::file::information(h)?.file_index());
+}
 
 /// Turns an inotify event into an event stream
 fn as_event_stream(
@@ -535,7 +549,11 @@ impl FileSystem {
             }
             _ => {
                 trace!("inserting file {}", path.display());
-                let inode = path.metadata().map_err(Error::File)?.ino();
+                let file = OpenOptions::new()
+                    .read(true)
+                    .open(path)
+                    .map_err(Error::File)?;
+                let inode = get_inode(path, &file).map_err(Error::File)?;
                 self.wd_by_inode.insert(inode, path.into());
 
                 let offsets = self.get_initial_offset(path, inode.into());

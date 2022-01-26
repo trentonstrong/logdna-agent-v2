@@ -10,7 +10,6 @@ members = [
     "common/journald",
     "common/state",
     "common/notify_stream",
-    "bench"
 ]
 
 [profile.release]
