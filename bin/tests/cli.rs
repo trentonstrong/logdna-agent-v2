@@ -158,6 +158,7 @@ fn test_read_file_appended_in_the_background() {
 #[test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 fn test_append_and_delete() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let dir = tempdir().expect("Could not create temp dir").into_path();
     let file_path = dir.join("file1.log");
     File::create(&file_path).expect("Could not create file");
@@ -215,11 +216,12 @@ fn test_delete_does_not_leave_file_descriptor() {
     let dir = tempdir().expect("Could not create temp dir").into_path();
     let file_path = dir.join("file1.log");
     File::create(&file_path).expect("Could not create file");
-
-    let mut agent_handle = common::spawn_agent(AgentSettings::new(dir.to_str().unwrap()));
+    let mut settings = AgentSettings::new(dir.to_str().unwrap());
+    settings.log_level = Some("debug,notify_stream=trace,fs::cache=trace");
+    let mut agent_handle = common::spawn_agent(settings);
 
     let process_id = agent_handle.id();
-    let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
+    let mut stderr_reader = BufReader::new(agent_handle.stderr.take().unwrap());
 
     common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     common::append_to_file(&file_path, 100, 50).expect("Could not append");
@@ -230,6 +232,8 @@ fn test_delete_does_not_leave_file_descriptor() {
     // Remove it
     fs::remove_file(&file_path).expect("Could not remove file");
     common::wait_for_file_event("unwatching", &file_path, &mut stderr_reader);
+
+    consume_output(stderr_reader.into_inner());
 
     common::assert_agent_running(&mut agent_handle);
 
@@ -939,6 +943,7 @@ async fn test_partial_fsynced_lines() {
 #[tokio::test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 async fn test_tags() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let dir = tempdir().expect("Couldn't create temp dir...").into_path();
 
     let (server, received, shutdown_handle, addr) = common::start_http_ingester();
@@ -949,8 +954,10 @@ async fn test_tags() {
     settings.tags = Some(tag);
     let mut agent_handle = common::spawn_agent(settings);
 
-    let agent_stderr = agent_handle.stderr.take().unwrap();
-    consume_output(agent_stderr);
+    let mut agent_stderr = BufReader::new(agent_handle.stderr.take().unwrap());
+    common::wait_for_event("Enabling filesystem", &mut agent_stderr);
+
+    consume_output(agent_stderr.into_inner());
 
     let (server_result, _) = tokio::join!(server, async {
         let total_lines: usize = 10;
@@ -1762,7 +1769,7 @@ async fn test_tight_writes() {
 
         let map = received.lock().await;
         let file_info = map.get(file_path.to_str().unwrap()).unwrap();
-        assert_eq!(file_info.lines, lines + 1);
+        assert_eq!(file_info.lines, lines);
         shutdown_handle();
         Ok(())
     });
