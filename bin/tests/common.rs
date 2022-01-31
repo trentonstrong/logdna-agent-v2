@@ -39,6 +39,7 @@ pub struct FileContext {
 pub fn start_append_to_file(dir: &Path, delay_ms: u64) -> FileContext {
     let file_path = dir.join("appended.log");
     let inner_file_path = file_path.clone();
+    debug!("appending to {:#?}", inner_file_path);
     let (tx, rx) = mpsc::channel();
 
     let thread = thread::spawn(move || {

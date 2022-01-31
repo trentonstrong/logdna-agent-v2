@@ -1321,6 +1321,7 @@ mod tests {
     // Deletes a directory
     #[tokio::test]
     async fn filesystem_delete_nested_filled_dir() -> io::Result<()> {
+        let _ = env_logger::Builder::from_default_env().try_init();
         // Now make a nested dir
         let rootdir = TempDir::new()?;
         let rootpath = rootdir.path().to_path_buf();
@@ -1426,6 +1427,7 @@ mod tests {
     // Deletes the pointee of a symlink
     #[tokio::test]
     async fn filesystem_delete_symlink_pointee() -> io::Result<()> {
+        let _ = env_logger::Builder::from_default_env().try_init();
         let tempdir = TempDir::new()?;
         let path = tempdir.path().to_path_buf();
 
@@ -1501,6 +1503,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn filesystem_move_dir_internal() -> io::Result<()> {
+        let _ = env_logger::Builder::from_default_env().try_init();
         let tempdir = TempDir::new()?.into_path();
         let path = tempdir.clone();
 

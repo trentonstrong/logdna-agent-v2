@@ -166,7 +166,10 @@ fn test_append_and_delete() {
 
     let mut stderr_reader = BufReader::new(agent_handle.stderr.take().unwrap());
 
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
+    thread::sleep(std::time::Duration::from_millis(1000));
+
+    debug!("got event, appending to file");
     common::append_to_file(&file_path, 10_000, 50).expect("Could not append");
     fs::remove_file(&file_path).expect("Could not remove file");
 
@@ -175,6 +178,7 @@ fn test_append_and_delete() {
 
     common::wait_for_file_event("unwatching", &file_path, &mut stderr_reader);
     common::wait_for_file_event("added", &file_path, &mut stderr_reader);
+    consume_output(stderr_reader.into_inner());
 
     common::assert_agent_running(&mut agent_handle);
 
@@ -184,6 +188,7 @@ fn test_append_and_delete() {
 #[test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 fn test_file_added_after_initialization() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let dir = tempdir().expect("Could not create temp dir").into_path();
 
     let mut agent_handle = common::spawn_agent(AgentSettings::new(dir.to_str().unwrap()));
@@ -206,6 +211,7 @@ fn test_file_added_after_initialization() {
 #[test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 fn test_delete_does_not_leave_file_descriptor() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let dir = tempdir().expect("Could not create temp dir").into_path();
     let file_path = dir.join("file1.log");
     File::create(&file_path).expect("Could not create file");
@@ -215,7 +221,7 @@ fn test_delete_does_not_leave_file_descriptor() {
     let process_id = agent_handle.id();
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
 
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     common::append_to_file(&file_path, 100, 50).expect("Could not append");
 
     // Verify that the file is shown in the open files of the process
@@ -244,6 +250,7 @@ fn test_delete_does_not_leave_file_descriptor() {
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 #[cfg(unix)]
 fn test_send_sigterm_does_not_leave_file_descriptor() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     // k8s uses SIGTERM
     test_signals(nix::sys::signal::Signal::SIGTERM);
 }
@@ -252,6 +259,7 @@ fn test_send_sigterm_does_not_leave_file_descriptor() {
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 #[cfg(unix)]
 fn test_send_sigint_does_not_leave_file_descriptor() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     // k8s uses SIGTERM
     test_signals(nix::sys::signal::Signal::SIGINT);
 }
@@ -269,7 +277,7 @@ fn test_signals(signal: nix::sys::signal::Signal) {
     let process_id = agent_handle.id();
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
 
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     common::append_to_file(&file_path, 100, 50).expect("Could not append");
 
     // Verify that the file is shown in the open files
@@ -301,7 +309,7 @@ fn test_append_and_move() {
     let mut agent_handle = common::spawn_agent(AgentSettings::new(dir.to_str().unwrap()));
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
 
-    common::wait_for_file_event("initialized", &file1_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file1_path, &mut stderr_reader);
     common::append_to_file(&file1_path, 10_000, 50).expect("Could not append");
     fs::rename(&file1_path, &file2_path).expect("Could not move file");
     fs::remove_file(&file2_path).expect("Could not remove file");
@@ -320,6 +328,7 @@ fn test_append_and_move() {
 #[test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 fn test_truncate_file() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     // K8s uses copytruncate, see https://github.com/kubernetes/kubernetes/issues/38495
     let dir = tempdir().expect("Could not create temp dir").into_path();
     let file_path = dir.join("file1.log");
@@ -329,7 +338,7 @@ fn test_truncate_file() {
 
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
 
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     common::append_to_file(&file_path, 10_000, 20).expect("Could not append");
     common::truncate_file(&file_path).expect("Could not truncate file");
 
@@ -349,6 +358,7 @@ fn test_truncate_file() {
 #[test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 fn test_exclusion_rules() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let dir = tempdir().expect("Could not create temp dir").into_path();
     let included_file = dir.join("file1.log");
     let excluded_file = dir.join("file2.log");
@@ -363,9 +373,9 @@ fn test_exclusion_rules() {
 
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
 
-    let lines = common::wait_for_file_event("initialized", &included_file, &mut stderr_reader);
+    let lines = common::wait_for_file_event("initialize", &included_file, &mut stderr_reader);
 
-    let matches_excluded_file = predicate::str::is_match(r"initialized [^\n]*file2\.log").unwrap();
+    let matches_excluded_file = predicate::str::is_match(r"initialize event for file [^\n]*file2\.log").unwrap();
     assert!(
         !matches_excluded_file.eval(&lines),
         "file2.log should have been excluded"
@@ -388,6 +398,7 @@ fn test_exclusion_rules() {
 #[test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 fn test_include_only_rules() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let dir = tempdir().unwrap().into_path();
     let included = dir.join("my_app.log");
     let excluded1 = dir.join("other_file.log");
@@ -403,15 +414,15 @@ fn test_include_only_rules() {
     });
 
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
-    let lines = common::wait_for_file_event("initialized", &included, &mut stderr_reader);
+    let lines = common::wait_for_file_event("initialize", &included, &mut stderr_reader);
 
     let matches_excluded1 = predicate::str::is_match(format!(
-        r"initialized [^\n]*{}",
+        r"initialize event for file [^\n]*{}",
         excluded1.file_stem().unwrap().to_str().unwrap()
     ))
     .unwrap();
     let matches_excluded2 = predicate::str::is_match(format!(
-        r"initialized [^\n]*{}",
+        r"initialize event for file [^\n]*{}",
         excluded2.file_stem().unwrap().to_str().unwrap()
     ))
     .unwrap();
@@ -432,6 +443,7 @@ fn test_include_only_rules() {
 #[test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 fn test_files_other_than_dot_log_should_be_not_included_by_default() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let dir = tempdir().expect("Could not create temp dir").into_path();
     let included_file = dir.join("file1.log");
     let not_included_files = vec![
@@ -451,7 +463,7 @@ fn test_files_other_than_dot_log_should_be_not_included_by_default() {
     let mut agent_handle = common::spawn_agent(AgentSettings::new(dir.to_str().unwrap()));
 
     let mut reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
-    let lines = common::wait_for_file_event("initialized", &included_file, &mut reader);
+    let lines = common::wait_for_file_event("initialize", &included_file, &mut reader);
 
     for file_name in &not_included_files {
         let file_parts: Vec<&str> = file_name.split('.').collect();
@@ -459,10 +471,10 @@ fn test_files_other_than_dot_log_should_be_not_included_by_default() {
         if file_parts.len() == 2 {
             regex = format!(
                 "{}{}\\.{}",
-                r"initialized [^\n]*", file_parts[0], file_parts[1]
+                r"initialize event for file [^\n]*", file_parts[0], file_parts[1]
             );
         } else {
-            regex = format!("{}{}", r"initialized [^\n]*", file_name);
+            regex = format!("{}{}", r"initialize event for file [^\n]*", file_name);
         }
         let matches_excluded_file = predicate::str::is_match(regex).unwrap();
         assert!(
@@ -480,18 +492,23 @@ fn test_files_other_than_dot_log_should_be_not_included_by_default() {
 #[cfg_attr(not(all(target_os = "linux", feature = "integration_tests")), ignore)]
 #[cfg(unix)]
 fn test_dangling_symlinks() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let log_dir = tempdir().expect("Could not create temp dir").into_path();
+    let log_sub_dir = log_dir.join("sub");
+    fs::create_dir(&log_sub_dir).unwrap();
     let data_dir = tempdir().expect("Could not create temp dir").into_path();
     let file_path = data_dir.join("file1.log");
-    let symlink_path = log_dir.join("file1.log");
+    let symlink_path = log_sub_dir.join("file1.log");
     common::append_to_file(&file_path, 100, 50).expect("Could not append");
 
-    let mut agent_handle = common::spawn_agent(AgentSettings::new(log_dir.to_str().unwrap()));
+    let mut settings = AgentSettings::new(log_dir.to_str().unwrap());
+    settings.log_level = Some("debug,notify_stream=trace,fs::cache=trace");
+    let mut agent_handle = common::spawn_agent(settings);
 
-    let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
+    let mut stderr_reader = BufReader::new(agent_handle.stderr.take().unwrap());
 
     std::os::unix::fs::symlink(&file_path, &symlink_path).unwrap();
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     common::append_to_file(&file_path, 100, 20).expect("Could not append");
 
     // Remove original file first
@@ -503,6 +520,10 @@ fn test_dangling_symlinks() {
     fs::remove_file(&symlink_path).expect("Could not remove symlink");
     common::wait_for_file_event("unwatching", &file_path, &mut stderr_reader);
 
+    common::wait_for_file_event("unwatching", &log_sub_dir, &mut stderr_reader);
+
+    consume_output(stderr_reader.into_inner());
+
     common::assert_agent_running(&mut agent_handle);
     agent_handle.kill().expect("Could not kill process");
 }
@@ -511,6 +532,7 @@ fn test_dangling_symlinks() {
 #[cfg_attr(not(all(target_os = "linux", feature = "integration_tests")), ignore)]
 #[cfg(unix)]
 fn test_append_after_symlinks_delete() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let log_dir = tempdir().expect("Could not create temp dir").into_path();
     let data_dir = tempdir().expect("Could not create temp dir").into_path();
     let file_path = data_dir.join("file1.log");
@@ -521,7 +543,7 @@ fn test_append_after_symlinks_delete() {
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
 
     std::os::unix::fs::symlink(&file_path, &symlink_path).unwrap();
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     common::append_to_file(&file_path, 100, 20).expect("Could not append");
 
     // Remove symlink first
@@ -566,7 +588,6 @@ fn test_directory_symlinks_delete() {
 
     std::os::unix::fs::symlink(&dir_1_path, &symlink_path).unwrap();
 
-    debug!("waiting for initialized");
     common::wait_for_file_event("watching", &symlink_path, &mut stderr_reader);
 
     common::append_to_file(&file1_path, 1_000, 50).expect("Could not append");
@@ -601,7 +622,7 @@ async fn test_journald_support() {
     common::wait_for_event("monitoring journald path", &mut agent_stderr);
     consume_output(agent_stderr.into_inner());
 
-    assert_eq!(journal::print(6, "Sample info"), 0);
+    assert_eq!(systemd::journal::print(6, "Sample info"), 0);
     tokio::time::sleep(Duration::from_millis(1000)).await;
     common::assert_agent_running(&mut agent_handle);
 
@@ -630,7 +651,7 @@ async fn test_journald_support() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(feature = "integration_tests"), ignore)]
+#[cfg(feature = "integration_tests")]
 #[cfg(target_os = "linux")]
 async fn test_journalctl_support() {
     let _ = env_logger::Builder::from_default_env().try_init();
@@ -870,7 +891,7 @@ async fn test_partial_fsynced_lines() {
     settings.exclusion_regex = Some(r"/var\w*");
     let mut agent_handle = common::spawn_agent(settings);
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     let (server_result, _) = tokio::join!(server, async {
         let mut file = OpenOptions::new()
             .append(true)
@@ -998,7 +1019,7 @@ async fn test_lookback_restarting_agent() {
         let mut agent_handle = common::spawn_agent(settings.clone());
         let mut agent_stderr = BufReader::new(agent_handle.stderr.take().unwrap());
 
-        common::wait_for_file_event("initialized", &file_path, &mut agent_stderr);
+        common::wait_for_file_event("initialize", &file_path, &mut agent_stderr);
 
         let writer_thread = std::thread::spawn(move || {
             for i in 0..line_count_target {
@@ -1427,7 +1448,7 @@ async fn test_line_rules(
     settings.line_redact_regex = redact;
     let mut agent_handle = common::spawn_agent(settings);
     let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
 
     let (server_result, _) = tokio::join!(server, async move {
         for item in to_write {
@@ -1706,7 +1727,7 @@ async fn test_tight_writes() {
     let mut agent_handle = common::spawn_agent(settings);
     let agent_stderr = agent_handle.stderr.take().unwrap();
     let mut stderr_reader = BufReader::new(agent_stderr);
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     let agent_stderr = stderr_reader.into_inner();
     consume_output(agent_stderr);
 
@@ -1776,7 +1797,7 @@ async fn test_tight_writes_with_slow_ingester() {
     let mut agent_handle = common::spawn_agent(settings);
     let agent_stderr = agent_handle.stderr.take().unwrap();
     let mut stderr_reader = BufReader::new(agent_stderr);
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     let agent_stderr = stderr_reader.into_inner();
     consume_output(agent_stderr);
 
@@ -1856,7 +1877,7 @@ async fn test_endurance_writes() {
     let mut agent_handle = common::spawn_agent(settings);
     let agent_stderr = agent_handle.stderr.take().unwrap();
     let mut stderr_reader = BufReader::new(agent_stderr);
-    common::wait_for_file_event("initialized", &file_path, &mut stderr_reader);
+    common::wait_for_file_event("initialize", &file_path, &mut stderr_reader);
     let agent_stderr = stderr_reader.into_inner();
     consume_output(agent_stderr);
 
