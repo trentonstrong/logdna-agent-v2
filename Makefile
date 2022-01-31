@@ -124,7 +124,7 @@ test-$(1):
 	$(RUST_COMMAND) "--env RUST_BACKTRACE=1 --env RUST_LOG=$(RUST_LOG)" "cargo test -p $(1) $(TESTS) -- --nocapture"
 endef
 
-CRATES=$(shell sed -e '/members/,/]/!d' Cargo.toml | tail -n +2 | $(_TAC) | tail -n +2 | $(_TAC) | sed 's/,//' | xargs -n1 -I{} sh -c 'grep -E "^name *=" {}/Cargo.toml | tail -n1' | sed 's/name *= *"\([A-Za-z0-9_\-]*\)"/\1/' | awk '!/journald/{print $0}')
+CRATES=$(shell sed -e '/members/,/]/!d' Cargo.toml | tail -n +2 | $(_TAC) | tail -n +2 | $(_TAC) | sed 's/,//' | xargs -I{} sh -c 'grep -E "^name *=" {}/Cargo.toml | tail -n1' | sed 's/name *= *"\([A-Za-z0-9_\-]*\)"/\1/' | awk '!/journald/{print $0}')
 $(foreach _crate, $(CRATES), $(eval $(call TEST_RULE,$(strip $(_crate)))))
 
 BUILD_ENV_DOCKER_ARGS=

@@ -1811,7 +1811,9 @@ name = "notify_stream"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "env_logger 0.9.0",
  "futures",
+ "log",
  "notify",
  "pin-utils",
  "predicates",

@@ -308,7 +308,18 @@ impl FileSystem {
         let result = match watch_event {
             WatchEvent::Create(wd) => self.process_create(&wd, &mut _entries),
             //TODO: Handle Write event for directories
-            WatchEvent::Write(wd) => self.process_modify(&wd),
+            WatchEvent::Write(wd) => {
+                match self.process_modify(&wd) {
+                    Err(Error::WatchEvent(_)) => {
+                        self.process_create(&wd, &mut _entries)
+                            .and_then(|mut e| {
+                                e.extend(self.process_modify(&wd)?);
+                                Ok(e)
+                            })
+                    },
+                    e => e,
+                }
+            }
             WatchEvent::Remove(wd) => self.process_delete(&wd, &mut _entries),
             WatchEvent::Rename(from_wd, to_wd) => {
                 // Source path should exist and be tracked to be a move
@@ -408,7 +419,16 @@ impl FileSystem {
                 let mut events = Vec::new();
                 return self
                     .remove(&path, &mut events, _entries)
-                    .map(move |_| events);
+                    .map(move |_| events).and_then(|mut events|{
+                        if let Some(parent) = path.clone().parent() {
+                            let files_count = fs::read_dir(parent).map_err(|e| Error::DirectoryListNotValid(e, path))?.count();
+                            debug!("FILES_COUNT = {:#?}", files_count);
+                            if files_count == 0 {
+                                events.extend(self.process_delete(parent, _entries)?.into_iter())
+                            }
+                        }
+                        Ok(events)
+                    });
             }
         } else {
             // The file is already gone (event was queued up), safely ignore
@@ -514,18 +534,17 @@ impl FileSystem {
                 .watch(&path, RecursiveMode::NonRecursive)
                 .map_err(|e| Error::Watch(path.to_path_buf(), e))?;
             let new_key = self.register_as_child(new_entry, _entries)?;
+            trace!("registered watcher for {:#?}", path);
             events.push(Event::New(new_key));
 
             for dir_entry in contents {
-                if dir_entry.is_err() {
-                    continue;
-                }
-                let dir_entry = dir_entry.unwrap();
-                if let Err(e) = self.insert(&dir_entry.path(), events, _entries) {
-                    info!(
-                        "error found when inserting child entry for {:?}: {}",
-                        path, e
-                    );
+                if let Ok(dir_entry) = dir_entry{
+                    if let Err(e) = self.insert(&dir_entry.path(), events, _entries) {
+                        info!(
+                            "error found when inserting child entry for {:?}: {}",
+                            path, e
+                        );
+                    }
                 }
             }
             return Ok(Some(new_key));
@@ -578,6 +597,17 @@ impl FileSystem {
 
         // Insert the link target
         if let Some(target) = symlink_target {
+            // Add the parent director of the symlink
+            if let Some(parent) = target.parent(){
+                // Insert the parent directory for symlink target so that we receive deletes
+                trace!("inserting symlink target parent directory {}", path.display());
+
+                // We use non-recursive watches and scan children manually
+                // to have the same behaviour across all platforms
+                self.watcher
+                    .watch(&parent, RecursiveMode::NonRecursive)
+                    .map_err(|e| Error::Watch(parent.to_path_buf(), e))?;
+            }
             match self.insert(&target, events, _entries) {
                 Err(e) => {
                     // The insert of the target failed, the changes to the symlink itself
@@ -712,7 +742,7 @@ impl FileSystem {
         _entries: &mut EntryMap,
     ) {
         self.unregister(entry_key, _entries);
-        if let Some(entry) = _entries.get(entry_key) {
+        if let Some(entry) = _entries.get(entry_key){
             let mut _children = vec![];
             let mut _links = vec![];
             match entry.deref() {
@@ -730,9 +760,16 @@ impl FileSystem {
 
                     events.push(Event::Delete(entry_key));
                 }
-                Entry::File { .. } => {
+                Entry::File { ref path, .. } => {
                     Metrics::fs().decrement_tracked_files();
-                    events.push(Event::Delete(entry_key));
+                    if let Some(entries) = self.symlinks.get(path) {
+                        for entry in entries {
+                            if let Some(entry) = _entries.get(*entry) {
+                                _links.push(entry.path().to_path_buf());
+                            }
+                        }
+                        events.push(Event::Delete(entry_key));
+                    }
                 }
             }
 
@@ -1496,8 +1533,9 @@ mod tests {
         let entry3 = lookup!(fs, new_dir_path.join("hard.log"));
         assert!(entry3.is_some());
 
+        // symlink is dangling. Can't insert a dangling symlink.
         let entry4 = lookup!(fs, new_dir_path.join("sym.log"));
-        assert!(entry4.is_some());
+        assert!(entry4.is_none());
 
         let _fs = fs.lock().await;
         let _entries = &_fs.entries;
@@ -1514,14 +1552,6 @@ mod tests {
 
         match _entries.get(entry3.unwrap()).unwrap().deref() {
             Entry::File { .. } => {}
-            _ => panic!("wrong entry type"),
-        };
-
-        match _entries.get(entry4.unwrap()).unwrap().deref() {
-            Entry::Symlink { link, .. } => {
-                // symlinks don't update so this link is bad
-                assert_eq!(*link, file_path);
-            }
             _ => panic!("wrong entry type"),
         };
 
@@ -1604,7 +1634,7 @@ mod tests {
         assert!(entry3.is_some());
 
         let entry4 = lookup!(fs, new_dir_path.join("sym.log"));
-        assert!(entry4.is_some());
+        assert!(entry4.is_none());
 
         let _fs = fs.lock().await;
         let _entries = &_fs.entries;
@@ -1624,13 +1654,6 @@ mod tests {
             _ => panic!("wrong entry type"),
         };
 
-        match _entries.get(entry4.unwrap()).unwrap().deref() {
-            Entry::Symlink { link, .. } => {
-                // symlinks don't update so this link is bad
-                assert_eq!(*link, file_path);
-            }
-            _ => panic!("wrong entry type"),
-        };
         Ok(())
     }
 

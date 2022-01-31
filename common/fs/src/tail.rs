@@ -395,8 +395,7 @@ mod test {
                 );
 
                 let stream = process(tailer)
-                    .expect("failed to read events")
-                    .timeout(std::time::Duration::from_millis(500));
+                    .expect("failed to read events");
                 pin_mut!(stream);
 
                 let events = take_events!(stream);
@@ -444,14 +443,13 @@ mod test {
                 );
 
                 let stream = process(tailer)
-                    .expect("failed to read events")
-                    .timeout(std::time::Duration::from_millis(500));
+                    .expect("failed to read events");
                 pin_mut!(stream);
 
                 let events = take_events!(stream);
                 assert_eq!(events.len(), 0);
 
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
                 let log_lines2 = "This is a test log line2";
                 writeln!(file, "{}", log_lines2).expect("Couldn't write to temp log file...");
@@ -477,8 +475,8 @@ mod test {
 
                 let mut file = File::create(&file_path).expect("Couldn't create temp log file...");
                 let line_write_count = (8_388_608 / (log_lines.as_bytes().len() + 1)) + 1;
-                (0..line_write_count).for_each(|_| {
-                    writeln!(file, "{}", log_lines).expect("Couldn't write to temp log file...")
+                (0..line_write_count).for_each(|i| {
+                    writeln!(file, "{}, {}", log_lines, i).expect("Couldn't write to temp log file...")
                 });
                 file.sync_all().expect("Failed to sync file");
 
@@ -494,8 +492,7 @@ mod test {
                 );
 
                 let stream = process(tailer)
-                    .expect("failed to read events")
-                    .timeout(std::time::Duration::from_millis(500));
+                    .expect("failed to read events");
                 pin_mut!(stream);
 
                 let events = take_events!(stream);
