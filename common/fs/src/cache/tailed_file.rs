@@ -327,7 +327,7 @@ impl<T> TailedFile<T> {
         resume_events_sender: Option<Sender<(u64, OffsetDateTime)>>,
     ) -> Result<Self, std::io::Error> {
         let file = OpenOptions::new().read(true).open(path)?;
-        let inode = get_inode(path, &file)?;
+        let inode = get_inode(path, Some(&file))?;
         Ok(Self {
             inner: Arc::new(Mutex::new(TailedFileInner {
                 reader: BufReader::new(tokio::fs::File::from_std(file)).compat(),

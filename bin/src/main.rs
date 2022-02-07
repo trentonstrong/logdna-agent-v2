@@ -38,8 +38,8 @@ use tokio::sync::Mutex;
 mod dep_audit;
 mod stream_adapter;
 
-/// Debounce filesystem event with a delay of hundreds of milliseconds
-static FS_EVENT_DELAY: Duration = Duration::from_millis(500);
+/// Debounce filesystem event
+static FS_EVENT_DELAY: Duration = Duration::from_millis(10);
 
 #[cfg(unix)]
 #[global_allocator]

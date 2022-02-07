@@ -32,11 +32,11 @@ pub struct Tailer {
 
 fn get_file_for_path(fs: &FileSystem, next_path: &std::path::Path) -> Option<EntryKey> {
     let entries = fs.entries.borrow();
-    let mut next_path = next_path;
-    loop {
+    let mut next_path_opt = Some(next_path);
+    while let Some(next_path) = next_path_opt {
         let next_entry_key = fs.lookup(next_path, &entries)?;
         match entries.get(next_entry_key) {
-            Some(Entry::Symlink { link, .. }) => next_path = link,
+            Some(Entry::Symlink { ref link, .. }) => next_path_opt = link.as_deref(),
             Some(Entry::File { .. }) => return Some(next_entry_key),
             _ => break,
         }
@@ -66,26 +66,28 @@ async fn handle_event(
                 }
                 Entry::Symlink { link, .. } => {
                     let sym_path = path;
-                    let final_target = get_file_for_path(fs, link)?;
+                    if let Some(link) = link {
+                        let final_target = get_file_for_path(fs, link)?;
 
-                    let entries = &fs.entries.borrow();
-                    let path = entries.get(final_target)?.path();
+                        let entries = &fs.entries.borrow();
+                        let path = entries.get(final_target)?.path();
 
-                    info!(
-                        "initialize event for symlink {}, final target {}",
-                        sym_path.display(),
-                        path.display()
-                    );
-
-                    let entry_key = get_file_for_path(fs, path)?;
-                    if let Entry::File { data, .. } = &entries.get(entry_key)? {
                         info!(
-                            "initialized symlink {:?} as {:?}",
+                            "initialize event for symlink {}, final target {}",
                             sym_path.display(),
-                            final_target
+                            path.display()
                         );
-                        let mut data = data.borrow_mut();
-                        return data.tail(vec![sym_path]).await;
+
+                        let entry_key = get_file_for_path(fs, path)?;
+                        if let Entry::File { data, .. } = &entries.get(entry_key)? {
+                            info!(
+                                "initialized symlink {:?} as {:?}",
+                                sym_path.display(),
+                                final_target
+                            );
+                            let mut data = data.borrow_mut();
+                            return data.tail(vec![sym_path]).await;
+                        }
                     }
                 }
                 _ => (),
@@ -123,12 +125,14 @@ async fn handle_event(
                 let path = entry.path().to_path_buf();
 
                 if let Entry::Symlink { link, .. } = entry {
-                    if let Some(real_entry) = fs.lookup(link, &entries) {
-                        if let Some(r_entry) = entries.get(real_entry) {
-                            entry = r_entry
+                    if let Some(link) = link {
+                        if let Some(real_entry) = fs.lookup(link, &entries) {
+                            if let Some(r_entry) = entries.get(real_entry) {
+                                entry = r_entry
+                            }
+                        } else {
+                            info!("can't wrap up deleted symlink - pointed to file / directory doesn't exist: {:?}", path);
                         }
-                    } else {
-                        info!("can't wrap up deleted symlink - pointed to file / directory doesn't exist: {:?}", path);
                     }
                 }
 
@@ -394,8 +398,7 @@ mod test {
                     DELAY,
                 );
 
-                let stream = process(tailer)
-                    .expect("failed to read events");
+                let stream = process(tailer).expect("failed to read events");
                 pin_mut!(stream);
 
                 let events = take_events!(stream);
@@ -442,8 +445,7 @@ mod test {
                     DELAY,
                 );
 
-                let stream = process(tailer)
-                    .expect("failed to read events");
+                let stream = process(tailer).expect("failed to read events");
                 pin_mut!(stream);
 
                 let events = take_events!(stream);
@@ -476,7 +478,8 @@ mod test {
                 let mut file = File::create(&file_path).expect("Couldn't create temp log file...");
                 let line_write_count = (8_388_608 / (log_lines.as_bytes().len() + 1)) + 1;
                 (0..line_write_count).for_each(|i| {
-                    writeln!(file, "{}, {}", log_lines, i).expect("Couldn't write to temp log file...")
+                    writeln!(file, "{}, {}", log_lines, i)
+                        .expect("Couldn't write to temp log file...")
                 });
                 file.sync_all().expect("Failed to sync file");
 
@@ -491,8 +494,7 @@ mod test {
                     DELAY,
                 );
 
-                let stream = process(tailer)
-                    .expect("failed to read events");
+                let stream = process(tailer).expect("failed to read events");
                 pin_mut!(stream);
 
                 let events = take_events!(stream);

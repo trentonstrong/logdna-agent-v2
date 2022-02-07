@@ -11,7 +11,7 @@ use crate::common::{consume_output, AgentSettings};
 
 use assert_cmd::prelude::*;
 use futures::FutureExt;
-use log::debug;
+use log::{debug, info};
 use logdna_mock_ingester::FileInfo;
 use predicates::prelude::*;
 use proptest::prelude::*;
@@ -127,18 +127,28 @@ fn api_key_present() {
 #[test]
 #[cfg_attr(not(feature = "integration_tests"), ignore)]
 fn test_read_file_appended_in_the_background() {
+    let _ = env_logger::Builder::from_default_env().try_init();
     let dir = tempdir().expect("Could not create temp dir").into_path();
-    let mut agent_handle = common::spawn_agent(AgentSettings::new(dir.to_str().unwrap()));
 
     let context = common::start_append_to_file(&dir, 5);
 
-    let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
+    let mut settings = AgentSettings::new(dir.to_str().unwrap());
+    settings.log_level = Some("debug,notify_stream=trace,fs::cache=trace");
+    let mut agent_handle = common::spawn_agent(settings);
+    let mut stderr_reader = BufReader::new(agent_handle.stderr.take().unwrap());
+    common::wait_for_file_event("watching", &dir, &mut stderr_reader);
+    thread::sleep(std::time::Duration::from_millis(1000));
+
     let mut line = String::new();
     let mut occurrences = 0;
     let expected_occurrences = 100;
 
-    for _safeguard in 0..100_000 {
+    let instant = std::time::Instant::now();
+
+    for _safeguard in 0..250 {
+        assert!(instant.elapsed() < Duration::from_secs(20));
         stderr_reader.read_line(&mut line).unwrap();
+        debug!("Checking line for 'sendings lines for', line:  {:#?}", line);
         if line.contains("sendings lines for") && line.contains("appended.log") {
             occurrences += 1;
         }
@@ -177,8 +187,10 @@ fn test_append_and_delete() {
     // Immediately, start appending in a new file
     common::append_to_file(&file_path, 5, 5).expect("Could not append");
 
+    debug!("got event, waiting for unwatching");
     common::wait_for_file_event("unwatching", &file_path, &mut stderr_reader);
-    common::wait_for_file_event("added", &file_path, &mut stderr_reader);
+    debug!("got event, waiting for watching");
+    common::wait_for_file_event("watching", &file_path, &mut stderr_reader);
     consume_output(stderr_reader.into_inner());
 
     common::assert_agent_running(&mut agent_handle);
@@ -200,7 +212,7 @@ fn test_file_added_after_initialization() {
 
     let file_path = dir.join("file1.log");
     File::create(&file_path).expect("Could not create file");
-    common::wait_for_file_event("added", &file_path, &mut reader);
+    common::wait_for_file_event("watching", &file_path, &mut reader);
     common::append_to_file(&file_path, 1000, 50).expect("Could not append");
     common::wait_for_file_event("tailer sendings lines for", &file_path, &mut reader);
 
@@ -322,7 +334,7 @@ fn test_append_and_move() {
     common::append_to_file(&file1_path, 5, 5).expect("Could not append");
 
     // Should be added back
-    common::wait_for_file_event("added", &file1_path, &mut stderr_reader);
+    common::wait_for_file_event("watching", &file1_path, &mut stderr_reader);
 
     common::assert_agent_running(&mut agent_handle);
 
@@ -379,7 +391,8 @@ fn test_exclusion_rules() {
 
     let lines = common::wait_for_file_event("initialize", &included_file, &mut stderr_reader);
 
-    let matches_excluded_file = predicate::str::is_match(r"initialize event for file [^\n]*file2\.log").unwrap();
+    let matches_excluded_file =
+        predicate::str::is_match(r"initialize event for file [^\n]*file2\.log").unwrap();
     assert!(
         !matches_excluded_file.eval(&lines),
         "file2.log should have been excluded"
@@ -588,10 +601,11 @@ fn test_directory_symlinks_delete() {
 
     let mut agent_handle = common::spawn_agent(AgentSettings::new(log_dir.to_str().unwrap()));
 
-    let mut stderr_reader = BufReader::new(agent_handle.stderr.as_mut().unwrap());
+    let mut stderr_reader = BufReader::new(agent_handle.stderr.take().unwrap());
 
     std::os::unix::fs::symlink(&dir_1_path, &symlink_path).unwrap();
 
+    debug!("waiting for watching");
     common::wait_for_file_event("watching", &symlink_path, &mut stderr_reader);
 
     common::append_to_file(&file1_path, 1_000, 50).expect("Could not append");
@@ -602,6 +616,7 @@ fn test_directory_symlinks_delete() {
 
     debug!("waiting for unwatching");
     common::wait_for_file_event("unwatching", &file3_path, &mut stderr_reader);
+    consume_output(stderr_reader.into_inner());
 
     common::assert_agent_running(&mut agent_handle);
     agent_handle.kill().expect("Could not kill process");
@@ -668,24 +683,21 @@ async fn test_journalctl_support() {
     let mut agent_handle = common::spawn_agent(settings);
     let mut agent_stderr = BufReader::new(agent_handle.stderr.take().unwrap());
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
     common::wait_for_event("Listening to journalctl", &mut agent_stderr);
     consume_output(agent_stderr.into_inner());
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(systemd::journal::print(6, "Sample info"), 0);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
     common::assert_agent_running(&mut agent_handle);
 
     let (server_result, _) = tokio::join!(server, async {
-        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
         for _ in 0..10 {
             systemd::journal::print(1, "Sample alert");
             systemd::journal::print(6, "Sample info");
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
 
         // Wait for the data to be received by the mock ingester
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
         let map = received.lock().await;
         let file_info = map.values().next().unwrap();
@@ -1010,6 +1022,7 @@ async fn test_lookback_restarting_agent() {
     settings.state_db_dir = Some(&db_dir);
     settings.exclusion_regex = Some(r"/var\w*");
     settings.lookback = Some("smallfiles");
+    settings.log_level = Some("info,notify_stream=trace,fs::cache=trace");
 
     let line_count_target = 5_000;
 
@@ -1022,11 +1035,14 @@ async fn test_lookback_restarting_agent() {
             .create(true)
             .open(&file_path)
             .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         debug!("Running first agent");
         let mut agent_handle = common::spawn_agent(settings.clone());
         let mut agent_stderr = BufReader::new(agent_handle.stderr.take().unwrap());
 
         common::wait_for_file_event("initialize", &file_path, &mut agent_stderr);
+        consume_output(agent_stderr.into_inner());
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         let writer_thread = std::thread::spawn(move || {
             for i in 0..line_count_target {
@@ -1034,6 +1050,7 @@ async fn test_lookback_restarting_agent() {
                 line_count_clone.fetch_add(1, Ordering::SeqCst);
                 if i % 1000 == 0 {
                     file.sync_all().unwrap();
+                    info!("Syncing background file");
                 }
 
                 if i % 20 == 0 {
@@ -1042,27 +1059,29 @@ async fn test_lookback_restarting_agent() {
             }
         });
 
-        consume_output(agent_stderr.into_inner());
         tokio::time::sleep(tokio::time::Duration::from_millis(2_000)).await;
 
         while line_count.load(Ordering::SeqCst) < line_count_target {
-            tokio::time::sleep(tokio::time::Duration::from_millis(1_000)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(1_500)).await;
             agent_handle.kill().expect("Could not kill process");
             // Restart it back again
-            debug!("Running next agent");
+            info!("Running next agent");
             agent_handle = common::spawn_agent(settings.clone());
             let agent_stderr = agent_handle.stderr.take().unwrap();
             consume_output(agent_stderr);
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            common::assert_agent_running(&mut agent_handle);
         }
 
         // Block til writing is definitely done
 
-        debug!("Waiting a bit");
+        info!("Waiting a bit");
         task::spawn_blocking(move || writer_thread.join().unwrap())
             // Give the agent a chance to catch up
             .then(|_| tokio::time::sleep(tokio::time::Duration::from_millis(10000)))
             .await;
 
+        info!("Sleeping to wait for agent");
         // Sleep a bit more to give the agent a chance to process
         tokio::time::sleep(tokio::time::Duration::from_millis(2500)).await;
 
@@ -1769,7 +1788,7 @@ async fn test_tight_writes() {
 
         let map = received.lock().await;
         let file_info = map.get(file_path.to_str().unwrap()).unwrap();
-        assert_eq!(file_info.lines, lines);
+        assert_eq!(file_info.lines, lines + 1);
         shutdown_handle();
         Ok(())
     });

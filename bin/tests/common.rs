@@ -271,21 +271,24 @@ pub fn wait_for_file_event(event: &str, file_path: &Path, reader: &mut dyn BufRe
     let file_name = &file_path.file_name().unwrap().to_str().unwrap();
     wait_for_line(reader, event, |line| {
         line.contains(event) && line.contains(file_name)
-    })
+    }, None)
 }
 
 /// Blocks until a certain event is logged by the agent
 pub fn wait_for_event(event: &str, reader: &mut dyn BufRead) -> String {
-    wait_for_line(reader, event, |line| line.contains(event))
+    wait_for_line(reader, event, |line| line.contains(event), None)
 }
 
-fn wait_for_line<F>(reader: &mut dyn BufRead, event_info: &str, condition: F) -> String
+fn wait_for_line<F>(reader: &mut dyn BufRead, event_info: &str, condition: F, delay: Option<std::time::Duration>) -> String
 where
     F: Fn(&str) -> bool,
 {
     let mut line = String::new();
     let mut lines_buffer = String::new();
+    let instant = std::time::Instant::now();
+
     for _safeguard in 0..100_000 {
+        assert!(instant.elapsed() < delay.unwrap_or(Duration::from_secs(20)), "Timed out waiting for condition");
         reader.read_line(&mut line).unwrap();
         if line.is_empty() {
             continue;
@@ -329,6 +332,7 @@ pub fn open_files_include(id: u32, file: &Path) -> Option<String> {
     assert!(output.status.success());
 
     let output_str = std::str::from_utf8(&output.stdout).unwrap();
+    debug!("lsof output:\n{:#?}", output_str);
     if output_str.contains(file.to_str().unwrap()) {
         Some(output_str.to_string())
     } else {
@@ -434,7 +438,11 @@ pub fn consume_output(stderr_handle: std::process::ChildStderr) {
     let stderr_reader = std::io::BufReader::new(stderr_handle);
     std::thread::spawn(move || {
         for line in stderr_reader.lines() {
-            debug!("{:?}", line);
+            let line = line.unwrap();
+            if line.is_empty() {
+                continue;
+            }
+            debug!("{}", line.trim());
         }
     });
 }
