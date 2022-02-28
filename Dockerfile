@@ -1,9 +1,53 @@
 # syntax = docker/dockerfile:1.0-experimental
 ARG BUILD_IMAGE
+ARG TARGET_PLATFORM
 ARG TARGET
+
+#FROM --platform=${TARGET_PLATFORM} registry.access.redhat.com/ubi8/ubi-minimal:8.4 as target
+FROM --platform=linux/amd64 registry.access.redhat.com/ubi8/ubi-minimal:8.4 as target
+RUN ls /etc/yum.repos.d
 
 FROM ${BUILD_IMAGE} as build
 
+ARG TARGET_ARCH=x86_64
+
+RUN apt update -y && apt install -y lld-12 gcc-aarch64-linux-gnu g++-aarch64-linux-gnu && ln -s /usr/bin/ld.ldd-12 /usr/bin/ld.ldd
+
+COPY --from=target /etc/yum.repos.d/ubi.repo /sysroot/ubi8/etc/yum.repos.d/
+COPY --from=target /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release /sysroot/ubi8/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+
+RUN ls /sysroot/ubi8/etc/pki/
+RUN apt update -y && apt install -y yum yum-utils && \
+    rpm --import /sysroot/ubi8/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release && \
+    wget https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi8/8/${TARGET_ARCH}/baseos/os/Packages/r/redhat-release-8.5-0.8.el8.${TARGET_ARCH}.rpm && \
+    rpm -i --nodeps --force --ignorearch --root=/sysroot/ubi8 redhat-release-8.5-0.8.el8.${TARGET_ARCH}.rpm
+
+RUN sed -i "s/\$basearch/${TARGET_ARCH}/" /sysroot/ubi8/etc/yum.repos.d/ubi.repo
+RUN mkdir /sysroot/ubi8/etc/yum && echo "[main]\nreposdir=/sysroot/ubi8/etc/yum.repos.d/" >> /sysroot/ubi8/etc/yum/yum.conf
+
+RUN mkdir -p /etc/pki/ && ln -s /sysroot/ubi8/etc/pki/rpm-gpg/ /etc/pki/
+
+RUN mkdir -p /tmp/rpms && cd /tmp/rpms && \
+    repotrack -c /sysroot/ubi8/etc/yum/yum.conf -a ${TARGET_ARCH} systemd-libs glibc-devel && \
+    ls | xargs -n1 rpm -i --nodeps --noscripts --force --ignorearch --root=/sysroot/ubi8
+
+# RUN echo ${TARGET_ARCH} > /etc/yum/vars/arch && \
+#     echo ${TARGET_ARCH} > /etc/yum/vars/basearch && \
+#     echo ignorearch=True >> /etc/yum/yum.conf
+#
+# RUN yum repolist -v --setopt=reposdir=/sysroot/ubi8/etc/yum.repos.d \
+#     --setopt=install_weak_deps=False \
+#     --installroot=/sysroot/ubi8
+#
+# RUN yum list available -v --setopt=reposdir=/sysroot/ubi8/etc/yum.repos.d \
+#     --setopt=install_weak_deps=False \
+#     --installroot=/sysroot/ubi8
+#
+# RUN yum install -v --setopt=reposdir=/sysroot/ubi8/etc/yum.repos.d \
+#     --setopt=install_weak_deps=False \
+#     --installroot=/sysroot/ubi8 -y \
+#     systemd-libs.${TARGET_ARCH} liblzma gcrpyt
+#
 ENV _RJEM_MALLOC_CONF="narenas:1,tcache:false,dirty_decay_ms:0,muzzy_decay_ms:0"
 ENV JEMALLOC_SYS_WITH_MALLOC_CONF="narenas:1,tcache:false,dirty_decay_ms:0,muzzy_decay_ms:0"
 
@@ -25,9 +69,9 @@ ARG TARGET
 ARG RUSTFLAGS
 ENV RUSTFLAGS=${RUSTFLAGS}
 
-ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Clink-self-contained=yes -Clinker=rust-lld ${RUSTFLAGS}"
-
 ENV RUST_LOG=rustc_codegen_ssa::back::link=info
+
+RUN rustup target add aarch64-unknown-linux-gnu
 
 # Create the directory for agent repo
 WORKDIR /opt/logdna-agent-v2
@@ -44,13 +88,14 @@ RUN --mount=type=secret,id=aws,target=/root/.aws/credentials \
     if [ -n "${TARGET}" ]; then export TARGET_ARG="--target ${TARGET}"; fi; \
     export ${BUILD_ENVS?};  \
     if [ -z "$SCCACHE_ENDPOINT" ]; then unset SCCACHE_ENDPOINT; fi; \
-    cargo build --manifest-path bin/Cargo.toml --no-default-features ${FEATURES} --release $TARGET_ARG && \
-    strip ./target/${TARGET}/release/logdna-agent && \
-    cp ./target/${TARGET}/release/logdna-agent /logdna-agent && \
+    cargo build -v --manifest-path bin/Cargo.toml --no-default-features ${FEATURES} --release $TARGET_ARG && \
+    find ./target/ -name "logdna-agent" && \
+    strip ./target/${TARGET}/release/logdna-agent; \
+    cp ./target/${TARGET}/release/logdna-agent /logdna-agent ;\
     sccache --show-stats
 
 # Use Red Hat Universal Base Image Minimal as the final base image
-FROM registry.access.redhat.com/ubi8/ubi-minimal:8.4
+FROM --platform=${TARGET_PLATFORM} registry.access.redhat.com/ubi8/ubi-minimal:8.4
 
 ARG REPO
 ARG BUILD_TIMESTAMP

@@ -87,7 +87,8 @@ ifeq ($(STATIC), 1)
 	TARGET=$(ARCH)-unknown-linux-musl
 	BUILD_ENVS=ROCKSDB_LIB_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/lib ROCKSDB_INCLUDE_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/include ROCKSDB_STATIC=1 JEMALLOC_SYS_WITH_LG_PAGE=16
 else
-	RUSTFLAGS:=
+	RUSTFLAGS:=-Lnative=/sysroot/ubi8/usr/lib64 -C linker=clang-12 -C link-args=--target=${TARGET} -C link-args=-fuse-ld=lld-12 -C link-args=-v -C link-args=-nodefaultlibs -C link-args=-nostdlib -C link-args=-nostdlib++ $(RUSTFLAGS)
+	BUILD_ENVS=SYSTEMD_LIB_DIR=/sysroot/ubi8/usr/lib64 TARGET_CC=${ARCH}-linux-gnu-gcc TARGET_AR=${ARCH}-linux-gnu-gcc-ar CFLAGS=-I/sysroot/ubi8/usr/include TARGET_CFLAGS=-I/sysroot/ubi8/usr/include BINDGEN_EXTRA_CLANG_ARGS=-I/sysroot/ubi8/usr/include
 endif
 
 # Should we profile the benchmarks
@@ -314,6 +315,9 @@ release: ## Create a new release from the current beta and push to github
 	git push --follow-tags
 	git checkout $(TARGET_BRANCH) || git checkout -b $(TARGET_BRANCH)
 
+DEB_ARCH_NAME_x86_64=amd64
+DEB_ARCH_NAME_aarch64=arm64
+
 .PHONY:build-image
 build-image: ## Build a docker image as specified in the Dockerfile
 	$(DOCKER) build . -t $(REPO):$(BUILD_TAG) \
@@ -324,6 +328,8 @@ build-image: ## Build a docker image as specified in the Dockerfile
 		--build-arg BUILD_ENVS="$(BUILD_ENVS)" \
 		--build-arg BUILD_IMAGE=$(RUST_IMAGE) \
 		--build-arg TARGET=$(TARGET) \
+		--build-arg TARGET_ARCH=${ARCH} \
+		--build-arg TARGET_PLATFORM=linux/$(DEB_ARCH_NAME_${ARCH}) \
 		--build-arg RUSTFLAGS='$(RUSTFLAGS)' \
 		--build-arg BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
 		--build-arg BUILD_VERSION=$(BUILD_VERSION) \
@@ -336,9 +342,6 @@ build-image: ## Build a docker image as specified in the Dockerfile
 		--build-arg SCCACHE_ENDPOINT=$(SCCACHE_ENDPOINT)
 
 DEB_VERSION=1
-DEB_ARCH_NAME_x86_64=amd64
-DEB_ARCH_NAME_aarch64=arm64
-
 .PHONY:build-deb
 build-deb: build-release
 	$(DEB_COMMAND) "" 'package_version="$(BUILD_VERSION)"; \
