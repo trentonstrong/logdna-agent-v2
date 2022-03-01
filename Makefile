@@ -84,23 +84,23 @@ endif
 SYSROOT_DIR=/sysroot/ubi8
 CLANG_ROOT=/usr/lib/llvm-12/lib/clang/12.0.1
 
-LINK=clang-12
-AR=llvm-ar-12
-LD=lld-12
+LINK=clang
+AR=llvm-ar
+LD=lld
 
 STATIC ?= 0
 ARCH_TRIPLE?=$(ARCH)-linux-gnu
 TARGET?=$(ARCH)-unknown-linux-gnu
 ifeq ($(STATIC), 1)
+	TARGET=$(ARCH)-unknown-linux-musl
 	ARCH_TRIPLE=$(ARCH)-linux-musl
 	RUSTFLAGS:=-C link-self-contained=yes -Ctarget-feature=+crt-static -Clink-arg=-static -Clink-arg=-static-libstdc++ -Clink-arg=-static-libgcc -L /usr/local/$(ARCH)-linux-musl/lib/ -l static=stdc++ $(RUSTFLAGS)
 	BINDGEN_EXTRA_CLANG_ARGS:=-I /usr/local/$(ARCH)-linux-musl/include
-	TARGET=$(ARCH)-unknown-linux-musl
 	BUILD_ENVS=ROCKSDB_LIB_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/lib ROCKSDB_INCLUDE_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/include ROCKSDB_STATIC=1 JEMALLOC_SYS_WITH_LG_PAGE=16 PCRE2_SYS_STATIC=1
 else
-	SYSROOT_SHARED_FLAGS=-nodefaultlibs -nostdinc -fuse-ld=$(LD) --sysroot=$(SYSROOT_DIR) -isysroot=$(SYSROOT_DIR) -isystem $(SYSROOT_DIR)/usr/include -isystem $(SYSROOT_DIR)/usr/lib/gcc/${ARCH}-redhat-linux/8/include/ --target=${TARGET}
+	SYSROOT_SHARED_FLAGS=-nodefaultlibs -nostdinc -fuse-ld=$(LD) -isystem $(CLANG_ROOT)/include/ --sysroot=$(SYSROOT_DIR) -isysroot=$(SYSROOT_DIR) -isystem $(SYSROOT_DIR)/usr/include -isystem $(SYSROOT_DIR)/usr/lib/gcc/${ARCH}-redhat-linux/8/include/ --target=${TARGET}
 	SYSROOT_CFLAGS="$(SYSROOT_SHARED_FLAGS) -lc"
-	SYSROOT_CXXFLAGS="-nostdinc++ -isystem $(CLANG_ROOT)/include/ -isystem $(SYSROOT_DIR)/usr/include/c++/8/${ARCH}-redhat-linux/ -isystem $(SYSROOT_DIR)/usr/include/c++/8/ -isystem $(SYSROOT_DIR)/usr/include/c++/ $(SYSROOT_SHARED_FLAGS)"
+	SYSROOT_CXXFLAGS="-nostdinc++ -isystem $(SYSROOT_DIR)/usr/include/c++/8/${ARCH}-redhat-linux/ -isystem $(SYSROOT_DIR)/usr/include/c++/8/ -isystem $(SYSROOT_DIR)/usr/include/c++/ $(SYSROOT_SHARED_FLAGS)"
 	RUSTFLAGS:=-C link-args=-nodefaultlibs -C linker=$(LINK) -C link-args=--target=${TARGET} -C link-args=-fuse-ld=$(LD) -C link-args=--sysroot=$(SYSROOT_DIR) -Lnative=$(SYSROOT_DIR)/usr/lib64 -Lnative=$(SYSROOT_DIR)/usr/lib/gcc/${ARCH}-redhat-linux/8/ -l static=stdc++ $(RUSTFLAGS)
 	BUILD_ENVS=SYSTEMD_LIB_DIR=$(SYSROOT_DIR)/usr/lib64 TARGET_AR=$(AR) PCRE2_SYS_STATIC=1
 endif
