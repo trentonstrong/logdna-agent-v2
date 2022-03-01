@@ -3,4 +3,9 @@
 if [ -z "$CLANG_TARGET" ]; then
     CLANG_TARGET=aarch-unknown-linux-gnu
 fi
-exec /usr/bin/clang --target=$CLANG_TARGET "$@"
+
+if [ -z "$CLANG_GCC_TOOLCHAIN" ]; then
+    CLANG_GCC_TOOLCHAIN=/usr/local/
+fi
+
+exec /usr/bin/clang --target=$CLANG_TARGET --gcc-toolchain=$CLANG_GCC_TOOLCHAIN "$@"

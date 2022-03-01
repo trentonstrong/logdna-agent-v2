@@ -9,7 +9,7 @@ FROM --platform=${TARGET_PLATFORM} registry.access.redhat.com/ubi8/ubi-minimal:8
 FROM ${BUILD_IMAGE} as build
 
 # TODO: move this bit into the build image
-RUN apt update -y && apt install -y lld-12 gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+RUN apt update -y && apt install -y lld-12 libc++-12-dev
 RUN rustup target add aarch64-unknown-linux-gnu
 
 RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-12 100 && \
@@ -28,10 +28,10 @@ RUN apt update -y && apt install -y yum yum-utils && \
     rpm --import /sysroot/ubi8/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release && \
     wget https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi8/8/${TARGET_ARCH}/baseos/os/Packages/r/redhat-release-8.5-0.8.el8.${TARGET_ARCH}.rpm && \
     rpm -i --nodeps --force --ignorearch --root=/sysroot/ubi8 redhat-release-8.5-0.8.el8.${TARGET_ARCH}.rpm && \
-    mkdir -p /etc/pki/ && ln -s /sysroot/ubi8/etc/pki/rpm-gpg/ /etc/pki/
+    mkdir -p /etc/pki/ && ln -fs /sysroot/ubi8/etc/pki/rpm-gpg/ /etc/pki/
 
 RUN sed -i "s/\$basearch/${TARGET_ARCH}/" /sysroot/ubi8/etc/yum.repos.d/ubi.repo
-RUN mkdir /sysroot/ubi8/etc/yum && echo "[main]\nreposdir=/sysroot/ubi8/etc/yum.repos.d/" >> /sysroot/ubi8/etc/yum/yum.conf &&\
+RUN mkdir -p /sysroot/ubi8/etc/yum && echo "[main]\nreposdir=/sysroot/ubi8/etc/yum.repos.d/" >> /sysroot/ubi8/etc/yum/yum.conf &&\
     mkdir -p /tmp/rpms && cd /tmp/rpms && \
     repotrack -c /sysroot/ubi8/etc/yum/yum.conf -a ${TARGET_ARCH} systemd-libs glibc-devel gcc-c++ libstdc++-static && \
     ls | xargs -n1 rpm -i --nodeps --noscripts --force --ignorearch --root=/sysroot/ubi8

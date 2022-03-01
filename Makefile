@@ -82,7 +82,8 @@ ifeq ($(VERBOSE),1)
 endif
 
 SYSROOT_DIR=/sysroot/ubi8
-CLANG_ROOT=/usr/lib/llvm-12/lib/clang/12.0.1
+LLVM_ROOT=/usr/lib/llvm-12
+CLANG_ROOT=$(LLVM_ROOT)/lib/clang/12.0.1
 
 LINK=clang
 AR=llvm-ar
@@ -91,16 +92,21 @@ LD=lld
 STATIC ?= 0
 ARCH_TRIPLE?=$(ARCH)-linux-gnu
 TARGET?=$(ARCH)-unknown-linux-gnu
+TARGET_ENV_VAR_SUFFIX=$(subst -,_,$(TARGET))
 ifeq ($(STATIC), 1)
 	TARGET=$(ARCH)-unknown-linux-musl
 	ARCH_TRIPLE=$(ARCH)-linux-musl
-	RUSTFLAGS:=-C link-self-contained=yes -Ctarget-feature=+crt-static -Clink-arg=-static -Clink-arg=-static-libstdc++ -Clink-arg=-static-libgcc -L /usr/local/$(ARCH)-linux-musl/lib/ -l static=stdc++ $(RUSTFLAGS)
-	BINDGEN_EXTRA_CLANG_ARGS:=-I /usr/local/$(ARCH)-linux-musl/include
-	BUILD_ENVS=ROCKSDB_LIB_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/lib ROCKSDB_INCLUDE_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/include ROCKSDB_STATIC=1 JEMALLOC_SYS_WITH_LG_PAGE=16 PCRE2_SYS_STATIC=1
+	MUSL_COMMON_FLAGS=-fuse-ld=$(LD) -nostdlib --rtlib=compiler-rt --verbose -Wl,--verbose -nodefaultlibs -nostdinc -isystem $(CLANG_ROOT)/include/ -isystem /usr/local/${ARCH}-linux-musl/include/ -isystem /usr/local/lib/gcc/${ARCH}-linux-musl/9.2.0/include -L/usr/local/${ARCH}-linux-musl/lib/ -L/usr/local/lib/gcc/${ARCH}-linux-musl/9.2.0/ -static -lc
+	CARGO_CC_VARS=CC_${TARGET_ENV_VAR_SUFFIX}=/build/scripts/clang-wrapper CXX_${TARGET_ENV_VAR_SUFFIX}=/build/scripts/clang++-wrapper
+	BINDGEN_EXTRA_CLANG_ARGS:=$(MUSL_COMMON_FLAGS) -I /usr/local/$(ARCH)-linux-musl/include
+	RUSTFLAGS:=-C link-self-contained=yes -C linker=$(LINK) -C link-args=--target=${TARGET} -C link-args=-fuse-ld=$(LD) -Ctarget-feature=+crt-static -Clink-arg=-static -Clink-arg=-static-libstdc++ -Clink-arg=-static-libgcc -L /usr/local/$(ARCH)-linux-musl/lib/ -l static=stdc++ $(RUSTFLAGS)
+	ROCKSDB_STATIC_VARS=ROCKSDB_LIB_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/lib ROCKSDB_INCLUDE_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/include ROCKSDB_STATIC=1
+	BUILD_ENVS=$(ROCKSDB_STATIC_VARS) TARGET_AR=$(AR) JEMALLOC_SYS_WITH_LG_PAGE=16 PCRE2_SYS_STATIC=1 CLANG_TARGET=${ARCH_TRIPLE} $(CARGO_CC_VARS)
+	DOCKER_CC_ENV_VARS=CFLAGS_${TARGET_ENV_VAR_SUFFIX}='$(MUSL_COMMON_FLAGS)' CXXFLAGS_${TARGET_ENV_VAR_SUFFIX}='-nostdinc++ --stdlib=libc++ -isystem /usr/lib/llvm-12/include/c++ -isystem /usr/local/${ARCH}-linux-musl/include/c++/9.2.0/${ARCH}-linux-musl/ -isystem /usr/local/${ARCH}-linux-musl/include/c++/9.2.0/ -isystem /usr/local/${ARCH}-linux-musl/include/c++ $(MUSL_COMMON_FLAGS)'
 else
-	SYSROOT_SHARED_FLAGS=-nodefaultlibs -nostdinc -fuse-ld=$(LD) -isystem $(CLANG_ROOT)/include/ --sysroot=$(SYSROOT_DIR) -isysroot=$(SYSROOT_DIR) -isystem $(SYSROOT_DIR)/usr/include -isystem $(SYSROOT_DIR)/usr/lib/gcc/${ARCH}-redhat-linux/8/include/ --target=${TARGET}
-	SYSROOT_CFLAGS="$(SYSROOT_SHARED_FLAGS) -lc"
-	SYSROOT_CXXFLAGS="-nostdinc++ -isystem $(SYSROOT_DIR)/usr/include/c++/8/${ARCH}-redhat-linux/ -isystem $(SYSROOT_DIR)/usr/include/c++/8/ -isystem $(SYSROOT_DIR)/usr/include/c++/ $(SYSROOT_SHARED_FLAGS)"
+	SYSROOT_COMMON_FLAGS=-nodefaultlibs -nostdinc -fuse-ld=$(LD) -isystem $(CLANG_ROOT)/include/ --sysroot=$(SYSROOT_DIR) -isysroot=$(SYSROOT_DIR) -isystem $(SYSROOT_DIR)/usr/include -isystem $(SYSROOT_DIR)/usr/lib/gcc/${ARCH}-redhat-linux/8/include/ --target=${TARGET}
+	SYSROOT_CFLAGS="$(SYSROOT_COMMON_FLAGS) -lc"
+	SYSROOT_CXXFLAGS="-nostdinc++ -isystem $(SYSROOT_DIR)/usr/include/c++/8/${ARCH}-redhat-linux/ -isystem $(SYSROOT_DIR)/usr/include/c++/8/ -isystem $(SYSROOT_DIR)/usr/include/c++/ $(SYSROOT_COMMON_FLAGS)"
 	RUSTFLAGS:=-C link-args=-nodefaultlibs -C linker=$(LINK) -C link-args=--target=${TARGET} -C link-args=-fuse-ld=$(LD) -C link-args=--sysroot=$(SYSROOT_DIR) -Lnative=$(SYSROOT_DIR)/usr/lib64 -Lnative=$(SYSROOT_DIR)/usr/lib/gcc/${ARCH}-redhat-linux/8/ -l static=stdc++ $(RUSTFLAGS)
 	BUILD_ENVS=SYSTEMD_LIB_DIR=$(SYSROOT_DIR)/usr/lib64 TARGET_AR=$(AR) PCRE2_SYS_STATIC=1
 endif
@@ -153,11 +159,11 @@ endif
 
 .PHONY:build
 build: ## Build the agent
-	$(UNCACHED_RUST_COMMAND) "$(BUILD_ENV_DOCKER_ARGS) --env RUST_BACKTRACE=full" "RUSTFLAGS='$(RUSTFLAGS)' BINDGEN_EXTRA_CLANG_ARGS='$(BINDGEN_EXTRA_CLANG_ARGS)' cargo build --no-default-features $(FEATURES_ARG) --manifest-path bin/Cargo.toml $(TARGET_DOCKER_ARG)"
+	$(UNCACHED_RUST_COMMAND) "$(BUILD_ENV_DOCKER_ARGS) --env RUST_BACKTRACE=full" "RUSTFLAGS='$(RUSTFLAGS)' $(DOCKER_CC_ENV_VARS) BINDGEN_EXTRA_CLANG_ARGS='$(BINDGEN_EXTRA_CLANG_ARGS)' cargo build -vv --no-default-features $(FEATURES_ARG) --manifest-path bin/Cargo.toml $(TARGET_DOCKER_ARG)"
 
 .PHONY:build-release
 build-release: ## Build a release version of the agent
-	$(UNCACHED_RUST_COMMAND) "$(BUILD_ENV_DOCKER_ARGS) --env RUST_BACKTRACE=full" "RUSTFLAGS='$(RUSTFLAGS)' BINDGEN_EXTRA_CLANG_ARGS='$(BINDGEN_EXTRA_CLANG_ARGS)' cargo build --no-default-features $(FEATURES_ARG) --manifest-path bin/Cargo.toml --release $(TARGET_DOCKER_ARG) && $(ARCH_TRIPLE)-strip ./target/$(TARGET)/release/logdna-agent"
+	$(UNCACHED_RUST_COMMAND) "$(BUILD_ENV_DOCKER_ARGS) --env RUST_BACKTRACE=full" "RUSTFLAGS='$(RUSTFLAGS)' $(DOCKER_CC_ENV_VARS) BINDGEN_EXTRA_CLANG_ARGS='$(BINDGEN_EXTRA_CLANG_ARGS)' cargo build -vv --no-default-features $(FEATURES_ARG) --manifest-path bin/Cargo.toml --release $(TARGET_DOCKER_ARG) && $(ARCH_TRIPLE)-strip ./target/$(TARGET)/release/logdna-agent"
 
 .PHONY:check
 check: ## Run unit tests
@@ -345,7 +351,7 @@ build-image: ## Build a docker image as specified in the Dockerfile
 		--build-arg BUILD_ENVS="$(BUILD_ENVS)" \
 		--build-arg BUILD_IMAGE=$(RUST_IMAGE) \
 		--build-arg TARGET=$(TARGET) \
-		--build-arg TARGET_ENV_VAR_SUFFIX=$(subst -,_,$(TARGET)) \
+		--build-arg TARGET_ENV_VAR_SUFFIX=$(TARGET_ENV_VAR_SUFFIX) \
 		--build-arg TARGET_ARCH=${ARCH} \
 		--build-arg TARGET_PLATFORM=linux/$(DEB_ARCH_NAME_${ARCH}) \
 		--build-arg ARCH_TRIPLE=${ARCH_TRIPLE} \
