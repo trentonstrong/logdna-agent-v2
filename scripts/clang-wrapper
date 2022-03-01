@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+
+if [ -z "$CLANG_TARGET" ]; then
+    CLANG_TARGET=aarch-unknown-linux-gnu
+fi
+exec /usr/bin/clang --target=$CLANG_TARGET "$@"
