@@ -77,18 +77,32 @@ else
 	PULL_OPTS :=
 endif
 
+ifeq ($(VERBOSE),1)
+	RUSTFLAGS:=$(RUSTFLAGS) -C link-args=-Wl,--verbose -C link-args=--verbose --verbose
+endif
+
+SYSROOT_DIR=/sysroot/ubi8
+CLANG_ROOT=/usr/lib/llvm-12/lib/clang/12.0.1
+
+LINK=clang-12
+AR=llvm-ar-12
+LD=lld-12
+
+STATIC ?= 0
 ARCH_TRIPLE?=$(ARCH)-linux-gnu
 TARGET?=$(ARCH)-unknown-linux-gnu
-STATIC ?= 0
 ifeq ($(STATIC), 1)
 	ARCH_TRIPLE=$(ARCH)-linux-musl
 	RUSTFLAGS:=-C link-self-contained=yes -Ctarget-feature=+crt-static -Clink-arg=-static -Clink-arg=-static-libstdc++ -Clink-arg=-static-libgcc -L /usr/local/$(ARCH)-linux-musl/lib/ -l static=stdc++ $(RUSTFLAGS)
 	BINDGEN_EXTRA_CLANG_ARGS:=-I /usr/local/$(ARCH)-linux-musl/include
 	TARGET=$(ARCH)-unknown-linux-musl
-	BUILD_ENVS=ROCKSDB_LIB_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/lib ROCKSDB_INCLUDE_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/include ROCKSDB_STATIC=1 JEMALLOC_SYS_WITH_LG_PAGE=16
+	BUILD_ENVS=ROCKSDB_LIB_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/lib ROCKSDB_INCLUDE_DIR=/usr/local/rocksdb/$(ARCH)-linux-musl/include ROCKSDB_STATIC=1 JEMALLOC_SYS_WITH_LG_PAGE=16 PCRE2_SYS_STATIC=1
 else
-	RUSTFLAGS:=-Lnative=/sysroot/ubi8/usr/lib64 -C linker=clang-12 -C link-args=--target=${TARGET} -C link-args=-fuse-ld=lld-12 -C link-args=-v -C link-args=-nodefaultlibs -C link-args=-nostdlib -C link-args=-nostdlib++ $(RUSTFLAGS)
-	BUILD_ENVS=SYSTEMD_LIB_DIR=/sysroot/ubi8/usr/lib64 TARGET_CC=${ARCH}-linux-gnu-gcc TARGET_AR=${ARCH}-linux-gnu-gcc-ar CFLAGS=-I/sysroot/ubi8/usr/include TARGET_CFLAGS=-I/sysroot/ubi8/usr/include BINDGEN_EXTRA_CLANG_ARGS=-I/sysroot/ubi8/usr/include
+	SYSROOT_SHARED_FLAGS=-nodefaultlibs -nostdinc -fuse-ld=$(LD) --sysroot=$(SYSROOT_DIR) -isysroot=$(SYSROOT_DIR) -isystem $(SYSROOT_DIR)/usr/include -isystem $(SYSROOT_DIR)/usr/lib/gcc/${ARCH}-redhat-linux/8/include/ --target=${TARGET}
+	SYSROOT_CFLAGS="$(SYSROOT_SHARED_FLAGS) -lc"
+	SYSROOT_CXXFLAGS="-nostdinc++ -isystem $(CLANG_ROOT)/include/ -isystem $(SYSROOT_DIR)/usr/include/c++/8/${ARCH}-redhat-linux/ -isystem $(SYSROOT_DIR)/usr/include/c++/8/ -isystem $(SYSROOT_DIR)/usr/include/c++/ $(SYSROOT_SHARED_FLAGS)"
+	RUSTFLAGS:=-C link-args=-nodefaultlibs -C linker=$(LINK) -C link-args=--target=${TARGET} -C link-args=-fuse-ld=$(LD) -C link-args=--sysroot=$(SYSROOT_DIR) -Lnative=$(SYSROOT_DIR)/usr/lib64 -Lnative=$(SYSROOT_DIR)/usr/lib/gcc/${ARCH}-redhat-linux/8/ -l static=stdc++ $(RUSTFLAGS)
+	BUILD_ENVS=SYSTEMD_LIB_DIR=$(SYSROOT_DIR)/usr/lib64 TARGET_AR=$(AR) PCRE2_SYS_STATIC=1
 endif
 
 # Should we profile the benchmarks
@@ -325,11 +339,16 @@ build-image: ## Build a docker image as specified in the Dockerfile
 		--progress=plain \
 		--secret id=aws,src=$(AWS_SHARED_CREDENTIALS_FILE) \
 		--rm \
+		--build-arg TARGET_CFLAGS=$(SYSROOT_CFLAGS) \
+		--build-arg TARGET_CXXFLAGS=$(SYSROOT_CXXFLAGS) \
+		--build-arg BINDGEN_EXTRA_CLANG_ARGS=$(SYSROOT_CFLAGS) \
 		--build-arg BUILD_ENVS="$(BUILD_ENVS)" \
 		--build-arg BUILD_IMAGE=$(RUST_IMAGE) \
 		--build-arg TARGET=$(TARGET) \
+		--build-arg TARGET_ENV_VAR_SUFFIX=$(subst -,_,$(TARGET)) \
 		--build-arg TARGET_ARCH=${ARCH} \
 		--build-arg TARGET_PLATFORM=linux/$(DEB_ARCH_NAME_${ARCH}) \
+		--build-arg ARCH_TRIPLE=${ARCH_TRIPLE} \
 		--build-arg RUSTFLAGS='$(RUSTFLAGS)' \
 		--build-arg BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
 		--build-arg BUILD_VERSION=$(BUILD_VERSION) \
