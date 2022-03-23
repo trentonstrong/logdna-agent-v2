@@ -23,12 +23,12 @@ use k8s::middleware::K8sMetadata;
 use k8s::K8sTrackingConf;
 use metrics::Metrics;
 use middleware::line_rules::LineRules;
+use middleware::meta_rules::MetaRules;
 use middleware::Executor;
 
 use pin_utils::pin_mut;
 use state::{AgentState, FileId, SpanVec};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::*;
@@ -119,7 +119,7 @@ async fn main() {
 
     let mut executor = Executor::new();
     if config.log.use_k8s_enrichment == K8sTrackingConf::Always
-        && PathBuf::from("/var/log/containers/").exists()
+        && option_env!("KUBERNETES_SERVICE_HOST").is_some()
     {
         let node_name = std::env::var("NODE_NAME").ok();
         match K8sMetadata::new(user_agent, node_name.as_deref()).await {
@@ -144,6 +144,14 @@ async fn main() {
         &config.log.line_inclusion_regex,
         &config.log.line_redact_regex,
     ) {
+        Ok(v) => executor.register(v),
+        Err(e) => {
+            error!("line regex is invalid: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    match MetaRules::new() {
         Ok(v) => executor.register(v),
         Err(e) => {
             error!("line regex is invalid: {}", e);
