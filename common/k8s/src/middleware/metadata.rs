@@ -117,6 +117,7 @@ impl Middleware for K8sMetadata {
             if let Some(parse_result) = parse_container_path(file_name) {
                 let obj_ref =
                     ObjectRef::new(&parse_result.pod_name).within(&parse_result.pod_namespace);
+
                 if let Some(pod) = self.store.get(&obj_ref) {
                     if let Some(ref annotations) = pod.metadata.annotations {
                         if line
@@ -143,6 +144,10 @@ impl Middleware for K8sMetadata {
                         };
                     }
                 }
+
+                // NOTE: Not sure if having a side effect is desirable here.
+                // Alternative would be to accumulate additional metrics in the LineBufferMut struct.
+                Metrics::k8s().increment_namespace_lines(&parse_result.pod_namespace);
             }
         }
         Status::Ok(line)

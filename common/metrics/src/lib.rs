@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use json::object;
 use lazy_static::lazy_static;
 use log::{info, warn};
@@ -76,6 +77,12 @@ lazy_static! {
     .unwrap();
     static ref K8S_LINES: IntCounter =
         register_int_counter!("logdna_agent_k8s_lines", "Kubernetes event lines read").unwrap();
+    static ref K8S_NAMESPACE_LINES: IntCounterVec = register_int_counter_vec!(
+        "logdna_agent_k8s_namespace_lines",
+        "Lines read from Kubernetes namespaces",
+        &["namespace"]
+    )
+    .unwrap();
     static ref JOURNAL_RECORDS: Histogram = register_histogram!(
         "logdna_agent_journald_records",
         "Size of the Journald log entries read"
@@ -355,6 +362,11 @@ impl K8s {
 
     pub fn increment_lines(&self) {
         K8S_LINES.inc();
+    }
+
+    pub fn increment_namespace_lines(&mut self, namespace: &str) {
+        // NOTE: Consider bounding the cardinality of namespace labels?
+        K8S_NAMESPACE_LINES.with_label_values(&[namespace]).inc();
     }
 
     pub fn increment_creates(&self) {
