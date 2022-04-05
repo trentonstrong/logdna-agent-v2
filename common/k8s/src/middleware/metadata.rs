@@ -147,7 +147,7 @@ impl Middleware for K8sMetadata {
 
                 // NOTE: Not sure if having a side effect is desirable here.
                 // Alternative would be to accumulate additional metrics in the LineBufferMut struct.
-                Metrics::k8s().increment_namespace_lines(&parse_result.pod_namespace);
+                Metrics::fs().increment_lines_with_namespace(&parse_result.pod_namespace);
             }
         }
         Status::Ok(line)

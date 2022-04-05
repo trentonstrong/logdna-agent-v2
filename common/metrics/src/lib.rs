@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use json::object;
 use lazy_static::lazy_static;
 use log::{info, warn};
@@ -14,6 +13,7 @@ use tikv_jemalloc_ctl::stats::{
 };
 use tikv_jemalloc_ctl::{epoch, epoch_mib};
 use tokio::time::sleep;
+use crate::labels::DEFAULT_NAMESPACE;
 
 lazy_static! {
     static ref METRICS: Metrics = Metrics::new();
@@ -23,8 +23,12 @@ lazy_static! {
         &["event_type"]
     )
     .unwrap();
-    static ref FS_LINES: IntCounter =
-        register_int_counter!("logdna_agent_fs_lines", "Number of lines parsed by the Filesystem module").unwrap();
+    static ref FS_LINES: IntCounterVec =
+        register_int_counter_vec!(
+        "logdna_agent_fs_lines",
+        "Number of lines parsed by the Filesystem module",
+        &["namespace"])
+    .unwrap();
     static ref FS_FILES: IntGauge =
         register_int_gauge!("logdna_agent_fs_files", "Number of open files").unwrap();
     static ref FS_BYTES: IntCounter =
@@ -69,18 +73,12 @@ lazy_static! {
         exponential_buckets(0.1, 4.0, 10).unwrap()
     )
     .unwrap();
+    static ref K8S_LINES: IntCounter =
+        register_int_counter!("logdna_agent_k8s_lines", "Kubernetes event lines read").unwrap();
     static ref K8S_EVENTS: IntCounterVec = register_int_counter_vec!(
         "logdna_agent_k8s_events",
         "Kubernetes events received",
         &["event_type"]
-    )
-    .unwrap();
-    static ref K8S_LINES: IntCounter =
-        register_int_counter!("logdna_agent_k8s_lines", "Kubernetes event lines read").unwrap();
-    static ref K8S_NAMESPACE_LINES: IntCounterVec = register_int_counter_vec!(
-        "logdna_agent_k8s_namespace_lines",
-        "Lines read from Kubernetes namespaces",
-        &["namespace"]
     )
     .unwrap();
     static ref JOURNAL_RECORDS: Histogram = register_histogram!(
@@ -99,6 +97,7 @@ mod labels {
     pub const SUCCESS: &str = "success";
     pub const FAILURE: &str = "failure";
     pub const TIMEOUT: &str = "timeout";
+    pub const DEFAULT_NAMESPACE: &str = "global";
 }
 
 pub struct Metrics {
@@ -156,6 +155,7 @@ impl Metrics {
     pub fn print() -> String {
         let memory = Metrics::memory();
 
+        let fs_lines = FS_LINES.with_label_values(&[DEFAULT_NAMESPACE]).get();
         let fs_create = FS_EVENTS.with_label_values(&[labels::CREATE]).get();
         let fs_delete = FS_EVENTS.with_label_values(&[labels::DELETE]).get();
         let fs_write = FS_EVENTS.with_label_values(&[labels::WRITE]).get();
@@ -171,7 +171,7 @@ impl Metrics {
                 "creates" => fs_create,
                 "deletes" => fs_delete,
                 "writes" => fs_write,
-                "lines" => FS_LINES.get(),
+                "lines" => fs_lines,
                 "bytes" => FS_BYTES.get(),
                 "files_tracked" => FS_FILES.get(),
             },
@@ -238,7 +238,16 @@ impl Fs {
     }
 
     pub fn increment_lines(&self) {
-        FS_LINES.inc();
+        self.increment_lines_vec(None);
+    }
+
+    pub fn increment_lines_with_namespace(&self, namespace: &str) {
+        self.increment_lines_vec(Some(namespace));
+    }
+
+    fn increment_lines_vec(&self, namespace: Option<&str>) {
+        let label = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        FS_LINES.with_label_values(&[label]).inc();
     }
 
     pub fn increment_tracked_files(&self) {
@@ -362,11 +371,6 @@ impl K8s {
 
     pub fn increment_lines(&self) {
         K8S_LINES.inc();
-    }
-
-    pub fn increment_namespace_lines(&mut self, namespace: &str) {
-        // NOTE: Consider bounding the cardinality of namespace labels?
-        K8S_NAMESPACE_LINES.with_label_values(&[namespace]).inc();
     }
 
     pub fn increment_creates(&self) {
